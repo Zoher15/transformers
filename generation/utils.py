@@ -1279,6 +1279,129 @@ class GenerationMixin:
 
         return transition_scores
 
+    # added by zoher
+    def compute_entropy_scores(
+        self,
+        sequences: torch.Tensor,
+        scores: Tuple[torch.Tensor],
+        beam_indices: Optional[torch.Tensor] = None,
+        normalize_logits: bool = False,
+    ) -> torch.Tensor:
+        """
+        Computes the entropy scores of sequences given the generation scores (and beam indices, if beam search was
+        used). This is a convenient method to quicky obtain the scores of the selected tokens at generation time.
+
+        Parameters:
+            sequences (`torch.LongTensor`):
+                The generated sequences. The second dimension (sequence_length) is either equal to `max_length` or
+                shorter if all batches finished early due to the `eos_token_id`.
+            scores (`tuple(torch.FloatTensor)`):
+                Transition scores for each vocabulary token at each generation step. Beam entropy scores consisting
+                of log probabilities of tokens conditioned on log softmax of previously generated tokens in this beam.
+                Tuple of `torch.FloatTensor` with up to `max_new_tokens` elements (one element for each generated token),
+                with each tensor of shape `(batch_size*num_beams, config.vocab_size)`.
+            beam_indices (`torch.LongTensor`, *optional*):
+                Beam indices of generated token id at each generation step. `torch.LongTensor` of shape
+                `(batch_size*num_return_sequences, sequence_length)`. Only required if a `num_beams>1` at
+                generate-time.
+            normalize_logits (`bool`, *optional*, defaults to `False`):
+                Whether to normalize the logits (which, for legacy reasons, may be unnormalized).
+
+        Return:
+            `torch.Tensor`: A `torch.Tensor` of shape `(batch_size*num_return_sequences, sequence_length)` containing
+                the entropy scores (logits)
+
+        Examples:
+
+        ```python
+        >>> from transformers import GPT2Tokenizer, AutoModelForCausalLM
+        >>> import numpy as np
+
+        >>> tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        >>> model = AutoModelForCausalLM.from_pretrained("openai-community/gpt2")
+        >>> tokenizer.pad_token_id = tokenizer.eos_token_id
+        >>> inputs = tokenizer(["Today is"], return_tensors="pt")
+
+        >>> # Example 1: Print the scores for each token generated with Greedy Search
+        >>> outputs = model.generate(**inputs, max_new_tokens=5, return_dict_in_generate=True, output_scores=True)
+        >>> entropy_scores = model.compute_entropy_scores(
+        ...     outputs.sequences, outputs.scores, normalize_logits=True
+        ... )
+        >>> # input_length is the length of the input prompt for decoder-only models, like the GPT family, and 1 for
+        >>> # encoder-decoder models, like BART or T5.
+        >>> input_length = 1 if model.config.is_encoder_decoder else inputs.input_ids.shape[1]
+        >>> generated_tokens = outputs.sequences[:, input_length:]
+        >>> for tok, score in zip(generated_tokens[0], entropy_scores[0]):
+        ...     # | token | token string | log probability | probability
+        ...     print(f"| {tok:5d} | {tokenizer.decode(tok):8s} | {score.numpy():.3f} | {np.exp(score.numpy()):.2%}")
+        |   262 |  the     | -1.414 | 24.33%
+        |  1110 |  day     | -2.609 | 7.36%
+        |   618 |  when    | -2.010 | 13.40%
+        |   356 |  we      | -1.859 | 15.58%
+        |   460 |  can     | -2.508 | 8.14%
+
+        >>> # Example 2: Reconstruct the sequence scores from Beam Search
+        >>> outputs = model.generate(
+        ...     **inputs,
+        ...     max_new_tokens=5,
+        ...     num_beams=4,
+        ...     num_return_sequences=4,
+        ...     return_dict_in_generate=True,
+        ...     output_scores=True,
+        ... )
+        >>> entropy_scores = model.compute_entropy_scores(
+        ...     outputs.sequences, outputs.scores, outputs.beam_indices, normalize_logits=False
+        ... )
+        >>> # If you sum the generated tokens' scores and apply the length penalty, you'll get the sequence scores.
+        >>> # Tip 1: recomputing the scores is only guaranteed to match with `normalize_logits=False`. Depending on the
+        >>> # use case, you might want to recompute it with `normalize_logits=True`.
+        >>> # Tip 2: the output length does NOT include the input length
+        >>> output_length = np.sum(entropy_scores.numpy() < 0, axis=1)
+        >>> length_penalty = model.generation_config.length_penalty
+        >>> reconstructed_scores = entropy_scores.sum(axis=1) / (output_length**length_penalty)
+        >>> print(np.allclose(outputs.sequences_scores, reconstructed_scores))
+        True
+        ```"""
+        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
+        # to a beam search approach were the first (and only) beam is always selected
+        if beam_indices is None:
+            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
+            beam_indices = beam_indices.expand(-1, len(scores))
+
+        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
+        # seq_len - input_length
+        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
+
+        # 3. Optionally normalize the logits (across the vocab dimension)
+        if normalize_logits:
+            scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
+            scores = torch.nn.functional.log_softmax(scores, dim=1)
+            scores = scores.reshape(-1, scores.shape[-1])
+
+        # 4. cut beam_indices to longest beam length
+        beam_indices_mask = beam_indices < 0
+        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
+        beam_indices = beam_indices.clone()[:, :max_beam_length]
+        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
+
+        # 5. Set indices of beams that finished early to 0; such indices will be masked correctly afterwards
+        beam_indices[beam_indices_mask] = 0
+
+        # 6. multiply beam_indices with vocab size to gather correctly from scores
+        beam_sequence_indices = beam_indices * self.config.vocab_size
+
+        # 7. Define which indices contributed to scores
+        cut_idx = sequences.shape[-1] - max_beam_length
+        indices = sequences[:, cut_idx:] + beam_sequence_indices
+
+        # 8. Compute scores
+        entropy_scores = scores.gather(0, indices)
+
+        # 9. Mask out entropy_scores of beams that stopped early
+        entropy_scores[beam_indices_mask] = 0
+
+        return entropy_scores
+
     def _validate_model_class(self):
         """
         Confirms that the model class is compatible with generation. If not, raises an exception that points to the
@@ -3269,6 +3392,20 @@ class GenerationMixin:
 
             # pre-process distribution
             next_token_scores = logits_processor(input_ids, next_token_logits)
+
+            # added by zoher
+            # zoher start
+            torch.manual_seed(0)
+            torch.cuda.manual_seed(0)
+            torch.backends.cudnn.deterministic = True
+            # if "top_p_linear_fade" in model_kwargs:
+            #     if model_kwargs["top_p_linear_fade"] > 0:
+            #         logits_warper[2].top_p = min(0.9, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            #     else:
+            #         logits_warper[2].top_p = max(0.0, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            if "temp_fade_exp" in model_kwargs and generation_config.temperature != 1:
+                logits_processor[0].temperature = max(1e-2, logits_processor[0].temperature/model_kwargs["temp_fade_exp"])
+            # zoher end
 
             # Store scores, attentions and hidden_states when required
             if return_dict_in_generate:
