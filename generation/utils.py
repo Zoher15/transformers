@@ -1395,7 +1395,9 @@ class GenerationMixin:
         indices = sequences[:, cut_idx:] + beam_sequence_indices
 
         # 8. Compute scores
-        entropy_scores = scores.gather(0, indices)
+        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
+        probs = torch.nn.functional.softmax(scores, dim=1)
+        entropy_scores = -torch.sum(probs * torch.log(probs), dim=1)
 
         # 9. Mask out entropy_scores of beams that stopped early
         entropy_scores[beam_indices_mask] = 0
