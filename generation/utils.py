@@ -1510,11 +1510,11 @@ class GenerationMixin:
                 unused_model_args.append(key)
 
         # added by zoher
-        # if unused_model_args:
-        #     raise ValueError(
-        #         f"The following `model_kwargs` are not used by the model: {unused_model_args} (note: typos in the"
-        #         " generate arguments will also show up in this list)"
-        #     )
+        if unused_model_args:
+            raise ValueError(
+                f"The following `model_kwargs` are not used by the model: {unused_model_args} (note: typos in the"
+                " generate arguments will also show up in this list)"
+            )
 
     def _validate_generated_length(self, generation_config, input_ids_length, has_default_max_length):
         """Performs validation related to the resulting generated length"""
@@ -3398,16 +3398,16 @@ class GenerationMixin:
 
             # added by zoher
             # zoher start
-            torch.manual_seed(0)
-            torch.cuda.manual_seed(0)
-            torch.backends.cudnn.deterministic = True
-            # if "top_p_linear_fade" in model_kwargs:
-            #     if model_kwargs["top_p_linear_fade"] > 0:
-            #         logits_warper[2].top_p = min(0.9, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
-            #     else:
-            #         logits_warper[2].top_p = max(0.0, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
-            if "temp_fade_exp" in model_kwargs and generation_config.temperature != 1:
-                logits_processor[0].temperature = max(1e-2, logits_processor[0].temperature/model_kwargs["temp_fade_exp"])
+            # torch.manual_seed(0)
+            # torch.cuda.manual_seed(0)
+            # torch.backends.cudnn.deterministic = True
+            # # if "top_p_linear_fade" in model_kwargs:
+            # #     if model_kwargs["top_p_linear_fade"] > 0:
+            # #         logits_warper[2].top_p = min(0.9, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            # #     else:
+            # #         logits_warper[2].top_p = max(0.0, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            # if "temp_fade_exp" in model_kwargs and generation_config.temperature != 1:
+            #     logits_processor[0].temperature = max(1e-2, logits_processor[0].temperature/model_kwargs["temp_fade_exp"])
             # zoher end
 
             # Store scores, attentions and hidden_states when required
