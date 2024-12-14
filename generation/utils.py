@@ -2132,7 +2132,14 @@ class GenerationMixin:
         assistant_tokenizer = kwargs.pop("assistant_tokenizer", None)  # only used for assisted generation
 
         generation_config, model_kwargs = self._prepare_generation_config(generation_config, **kwargs)
-        self._validate_model_kwargs(model_kwargs.copy())
+        
+        # zoher start
+        if 'zoher_sample' in kwargs and kwargs['zoher_sample'] == False:
+            generation_config.do_sample = False
+        # zoher end
+        
+        # commented by zoher
+        # self._validate_model_kwargs(model_kwargs.copy())
         self._validate_assistant(assistant_model, tokenizer, assistant_tokenizer)
 
         # 2. Set generation parameters if not already defined
@@ -3363,6 +3370,46 @@ class GenerationMixin:
                 model_forward = self.get_compiled_call(generation_config.compile_config)
 
         is_prefill = True
+        
+        # zoher start
+        if "top_k_beams" in model_kwargs:
+            top_k_beams = model_kwargs["top_k_beams"]
+            
+            old_max_length = generation_config.max_length
+            generation_config.max_length = old_max_length - generation_config.max_new_tokens + 1
+            # 1. prepare beam search scorer
+            beam_scorer = BeamSearchScorer(
+                batch_size=batch_size,
+                num_beams=top_k_beams,
+                device=input_ids.device,
+                length_penalty=generation_config.length_penalty,
+                do_early_stopping=generation_config.early_stopping,
+                num_beam_hyps_to_keep=top_k_beams,
+                max_length=generation_config.max_length,
+            )
+
+            # 2. interleave input_ids with top_k_beams additional sequences per batch
+            input_ids, model_kwargs = self._expand_inputs_for_generation(
+                input_ids=input_ids,
+                expand_size=top_k_beams,
+                is_encoder_decoder=self.config.is_encoder_decoder,
+                **model_kwargs,
+            )
+
+            # 13. run beam sample
+            input_ids = self._beam_search(
+                input_ids,
+                beam_scorer,
+                logits_processor=logits_processor,
+                stopping_criteria=stopping_criteria,
+                generation_config=generation_config,
+                synced_gpus=synced_gpus,
+                **model_kwargs,
+            )
+            
+            cur_len += 1
+        # zoher end
+        
         while self._has_unfinished_sequences(
             this_peer_finished, synced_gpus, device=input_ids.device, cur_len=cur_len, max_length=max_length
         ):
@@ -3693,6 +3740,7 @@ class GenerationMixin:
             # non eos token per beam.
             n_eos_tokens = eos_token_id.shape[0] if eos_token_id is not None else 0
             n_tokens_to_keep = max(2, 1 + n_eos_tokens) * num_beams
+
             if do_sample:
                 probs = nn.functional.softmax(next_token_scores, dim=-1)
                 next_tokens = torch.multinomial(probs, num_samples=n_tokens_to_keep)
