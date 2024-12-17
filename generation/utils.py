@@ -2136,6 +2136,10 @@ class GenerationMixin:
         # zoher start
         if 'zoher_sample' in kwargs and kwargs['zoher_sample'] == False:
             generation_config.do_sample = False
+        if 'zoher_num_return_sequences' in kwargs and kwargs['zoher_num_return_sequences'] > 1:
+            generation_config.num_return_sequences = kwargs['zoher_num_return_sequences']
+        if 'zoher_top_k' in kwargs and kwargs['zoher_top_k'] == None:
+            generation_config.top_k = None
         # zoher end
         
         # commented by zoher
