@@ -2133,15 +2133,6 @@ class GenerationMixin:
 
         generation_config, model_kwargs = self._prepare_generation_config(generation_config, **kwargs)
         
-        # zoher start
-        if 'zoher_sample' in kwargs and kwargs['zoher_sample'] == False:
-            generation_config.do_sample = False
-        if 'zoher_num_return_sequences' in kwargs and kwargs['zoher_num_return_sequences'] > 1:
-            generation_config.num_return_sequences = kwargs['zoher_num_return_sequences']
-        if 'zoher_top_k' in kwargs and kwargs['zoher_top_k'] == None:
-            generation_config.top_k = None
-        # zoher end
-        
         # commented by zoher
         # self._validate_model_kwargs(model_kwargs.copy())
         self._validate_assistant(assistant_model, tokenizer, assistant_tokenizer)
@@ -3375,103 +3366,17 @@ class GenerationMixin:
 
         is_prefill = True
         
-        # zoher start
-        if "top_k_beams" in model_kwargs:
-            top_k_beams = model_kwargs["top_k_beams"]
-            
-            # 1. expand the input_ids to top_k_beams
-            input_ids, model_kwargs = self._expand_inputs_for_generation(
-                input_ids=input_ids,
-                expand_size=top_k_beams,
-                is_encoder_decoder=self.config.is_encoder_decoder,
-                **model_kwargs,
-            )
-
-            # prepare model inputs
-            model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
-
-            # prepare variable output controls (note: some models won't accept all output controls)
-            model_inputs.update({"output_attentions": output_attentions} if output_attentions else {})
-            model_inputs.update({"output_hidden_states": output_hidden_states} if output_hidden_states else {})
-
-            outputs = self(**model_inputs, return_dict=True)
-            is_prefill = False
-
-            # synced_gpus: don't waste resources running the code we don't need; kwargs must be updated before skipping
-            model_kwargs = self._update_model_kwargs_for_generation(
-                outputs,
-                model_kwargs,
-                is_encoder_decoder=self.config.is_encoder_decoder,
-            )
-
-            # Clone is needed to avoid keeping a hanging ref to outputs.logits which may be very large for first iteration
-            # (the clone itself is always small)
-            next_token_logits = outputs.logits[:, -1, :].clone().float()
-            # reducing the dimension to 1
-            next_token_logits = next_token_logits[0].unsqueeze(0)
-            next_token_logits = next_token_logits.to(input_ids.device)
-            next_token_scores = nn.functional.log_softmax(
-                next_token_logits, dim=-1
-            )  # (batch_size * num_beams, vocab_size)
-            # pre-process distribution
-            next_token_scores = logits_processor(input_ids, next_token_logits)
-
-            # Store scores, attentions and hidden_states when required
-            if return_dict_in_generate:
-                if output_scores:
-                    scores += (next_token_scores,)
-                if output_logits:
-                    raw_logits += (next_token_logits,)
-                if output_attentions:
-                    decoder_attentions += (
-                        (outputs.decoder_attentions,) if self.config.is_encoder_decoder else (outputs.attentions,)
-                    )
-                    if self.config.is_encoder_decoder:
-                        cross_attentions += (outputs.cross_attentions,)
-
-                if output_hidden_states:
-                    decoder_hidden_states += (
-                        (outputs.decoder_hidden_states,)
-                        if self.config.is_encoder_decoder
-                        else (outputs.hidden_states,)
-                    )
-
-            # 2. Select top-k tokens and concatenate to input_ids
-            # token selection
-            if do_sample:
-                probs = nn.functional.softmax(next_token_scores, dim=-1)
-                next_tokens = torch.multinomial(probs, num_samples=top_k_beams)
-                next_token_scores = torch.gather(next_token_scores, -1, next_tokens)
-                next_token_scores, _indices = torch.sort(next_token_scores, descending=True, dim=1)
-                next_tokens = torch.gather(next_tokens, -1, _indices)
-            else:
-                next_token_scores, next_tokens = torch.topk(
-                    next_token_scores, top_k_beams, dim=1, largest=True, sorted=True
-                )
-
-            # finished sentences should have their next token be a padding token
-            if has_eos_stopping_criteria:
-                next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
-
-            
-            # update generated ids, model inputs, and length for next step
-            next_tokens = next_tokens.view(-1)
-            input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
-            if streamer is not None:
-                streamer.put(next_tokens.cpu())
-
-            unfinished_sequences = unfinished_sequences & ~stopping_criteria(input_ids, scores)
-            this_peer_finished = unfinished_sequences.max() == 0
-            cur_len += 1
-
-            # This is needed to properly delete outputs.logits which may be very large for first iteration
-            # Otherwise a reference to outputs is kept which keeps the logits alive in the next iteration
-            del outputs
-        # zoher end
-        
         while self._has_unfinished_sequences(
             this_peer_finished, synced_gpus, device=input_ids.device, cur_len=cur_len, max_length=max_length
         ):
+            if "top_k_beams" in model_kwargs:
+                top_k_beams = model_kwargs["top_k_beams"]
+                input_ids, model_kwargs = self._expand_inputs_for_generation(
+                    input_ids=input_ids,
+                    expand_size=top_k_beams,
+                    is_encoder_decoder=self.config.is_encoder_decoder,
+                    **model_kwargs,
+                )
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
@@ -3538,18 +3443,41 @@ class GenerationMixin:
 
             # token selection
             if do_sample:
-                probs = nn.functional.softmax(next_token_scores, dim=-1)
-                # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
-                next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+                if "top_k_beams" in model_kwargs:
+                    top_k_beams = model_kwargs["top_k_beams"]
+                    next_token_scores = next_token_scores[0].unsqueeze(0)
+                    probs = nn.functional.softmax(next_token_scores, dim=-1)
+                    next_tokens = torch.multinomial(probs, num_samples=top_k_beams)
+                    next_token_scores = torch.gather(next_token_scores, -1, next_tokens)
+                    next_token_scores, _indices = torch.sort(next_token_scores, descending=True, dim=1)
+                    next_tokens = torch.gather(next_tokens, -1, _indices)
+                else:
+                    probs = nn.functional.softmax(next_token_scores, dim=-1)
+                    # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
+                    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
             else:
-                next_tokens = torch.argmax(next_token_scores, dim=-1)
+                if "top_k_beams" in model_kwargs:
+                    top_k_beams = model_kwargs["top_k_beams"]
+                    next_token_scores = next_token_scores[0].unsqueeze(0)
+                    next_token_scores, next_tokens = torch.topk(
+                        next_token_scores, top_k_beams, dim=1, largest=True, sorted=True
+                    )
+                else:
+                    next_tokens = torch.argmax(next_token_scores, dim=-1)
 
             # finished sentences should have their next token be a padding token
             if has_eos_stopping_criteria:
                 next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
             # update generated ids, model inputs, and length for next step
-            input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+            if "top_k_beams" in model_kwargs:
+                next_tokens = next_tokens.view(-1)
+                # concatenate the new tokens
+                input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+                del model_kwargs["top_k_beams"]
+            else:
+                input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+            
             if streamer is not None:
                 streamer.put(next_tokens.cpu())
 
