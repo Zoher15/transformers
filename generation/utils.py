@@ -1284,8 +1284,7 @@ class GenerationMixin:
         self,
         sequences: torch.Tensor,
         scores: Tuple[torch.Tensor],
-        beam_indices: Optional[torch.Tensor] = None,
-        normalize_logits: bool = False,
+        beam_indices: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """
         Computes the entropy scores of sequences given the generation scores (and beam indices, if beam search was
@@ -1372,32 +1371,16 @@ class GenerationMixin:
         # seq_len - input_length
         scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
 
-        # 3. Optionally normalize the logits (across the vocab dimension)
-        if normalize_logits:
-            scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
-            scores = torch.nn.functional.log_softmax(scores, dim=1)
-            scores = scores.reshape(-1, scores.shape[-1])
-
         # 4. cut beam_indices to longest beam length
         beam_indices_mask = beam_indices < 0
         max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
-        beam_indices = beam_indices.clone()[:, :max_beam_length]
         beam_indices_mask = beam_indices_mask[:, :max_beam_length]
-
-        # 5. Set indices of beams that finished early to 0; such indices will be masked correctly afterwards
-        beam_indices[beam_indices_mask] = 0
-
-        # 6. multiply beam_indices with vocab size to gather correctly from scores
-        beam_sequence_indices = beam_indices * self.config.vocab_size
-
-        # 7. Define which indices contributed to scores
-        cut_idx = sequences.shape[-1] - max_beam_length
-        indices = sequences[:, cut_idx:] + beam_sequence_indices
 
         # 8. Compute scores
         scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
         probs = torch.nn.functional.softmax(scores, dim=1)
-        entropy_scores = -torch.sum(probs * torch.log(probs), dim=1)
+        logprobs = torch.nn.functional.log_softmax(scores, dim=1)
+        entropy_scores = -torch.nansum(torch.mul(probs, logprobs), dim=1)
 
         # 9. Mask out entropy_scores of beams that stopped early
         entropy_scores[beam_indices_mask] = 0
