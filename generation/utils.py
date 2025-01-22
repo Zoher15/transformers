@@ -3457,14 +3457,7 @@ class GenerationMixin:
         while self._has_unfinished_sequences(
             this_peer_finished, synced_gpus, device=input_ids.device, cur_len=cur_len, max_length=max_length
         ):
-            if "top_k_beams" in model_kwargs:
-                top_k_beams = model_kwargs["top_k_beams"]
-                input_ids, model_kwargs = self._expand_inputs_for_generation(
-                    input_ids=input_ids,
-                    expand_size=top_k_beams,
-                    is_encoder_decoder=self.config.is_encoder_decoder,
-                    **model_kwargs,
-                )
+
             # prepare model inputs
             model_inputs = self.prepare_inputs_for_generation(input_ids, **model_kwargs)
 
@@ -3530,26 +3523,24 @@ class GenerationMixin:
                     )
 
             # token selection
-            if do_sample:
-                if "top_k_beams" in model_kwargs:
-                    top_k_beams = model_kwargs["top_k_beams"]
-                    next_token_scores = next_token_scores[0].unsqueeze(0)
-                    probs = nn.functional.softmax(next_token_scores, dim=-1)
-                    next_tokens = torch.multinomial(probs, num_samples=top_k_beams)
-                    next_token_scores = torch.gather(next_token_scores, -1, next_tokens)
-                    next_token_scores, _indices = torch.sort(next_token_scores, descending=True, dim=1)
-                    next_tokens = torch.gather(next_tokens, -1, _indices)
-                else:
+            # added by zoher
+            '''
+            To do cot without prompting, we need to generate k diverse paths. The input has already been repeated k times (before passinge to generate). 
+            The next_token_scores for all k is the same. So we take the first one (index 0), get k top tokens, and set them as the next tokens. 
+            We also delete top_k_beams from model_kwargs so that it doesn't interfere with the next iteration. Everything will continue as normal.
+            '''
+            if "top_k_beams" in model_kwargs:
+                k = model_kwargs["top_k_beams"]
+                next_token_scores = next_token_scores[0].unsqueeze(0)
+                _, next_tokens = torch.topk(
+                    next_token_scores[0], k, dim=1, largest=True, sorted=True
+                )
+                del model_kwargs["top_k_beams"]
+            else:
+                if do_sample:
                     probs = nn.functional.softmax(next_token_scores, dim=-1)
                     # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
                     next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
-            else:
-                if "top_k_beams" in model_kwargs:
-                    top_k_beams = model_kwargs["top_k_beams"]
-                    next_token_scores = next_token_scores[0].unsqueeze(0)
-                    next_token_scores, next_tokens = torch.topk(
-                        next_token_scores, top_k_beams, dim=1, largest=True, sorted=True
-                    )
                 else:
                     next_tokens = torch.argmax(next_token_scores, dim=-1)
 
@@ -3558,13 +3549,7 @@ class GenerationMixin:
                 next_tokens = next_tokens * unfinished_sequences + pad_token_id * (1 - unfinished_sequences)
 
             # update generated ids, model inputs, and length for next step
-            if "top_k_beams" in model_kwargs:
-                next_tokens = next_tokens.view(-1)
-                # concatenate the new tokens
-                input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
-                del model_kwargs["top_k_beams"]
-            else:
-                input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
+            input_ids = torch.cat([input_ids, next_tokens[:, None]], dim=-1)
             
             if streamer is not None:
                 streamer.put(next_tokens.cpu())
