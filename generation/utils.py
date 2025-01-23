@@ -3533,8 +3533,9 @@ class GenerationMixin:
                 k = model_kwargs["top_k_beams"]
                 next_token_scores = next_token_scores[0].unsqueeze(0)
                 _, next_tokens = torch.topk(
-                    next_token_scores[0], k, dim=1, largest=True, sorted=True
+                    next_token_scores, k, dim=1, largest=True, sorted=True
                 )
+                next_tokens = next_tokens.squeeze(0)
                 del model_kwargs["top_k_beams"]
             else:
                 if do_sample:
