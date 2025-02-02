@@ -1280,37 +1280,6 @@ class GenerationMixin:
         return transition_scores
 
     # added by zoher
-    def compute_probmargin_scores(
-        self,
-        sequences: torch.Tensor,
-        scores: Tuple[torch.Tensor],
-        beam_indices: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-
-        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
-        # to a beam search approach were the first (and only) beam is always selected
-        if beam_indices is None:
-            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
-            beam_indices = beam_indices.expand(-1, len(scores))
-
-        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
-        # seq_len - input_length
-        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
-
-        # 4. cut beam_indices to longest beam length
-        beam_indices_mask = beam_indices < 0
-        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
-        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
-
-        # 8. Compute scores
-        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
-    
-        probs = torch.nn.functional.softmax(scores, dim=1)
-        values, _ = torch.topk(probs, 2, dim=1)
-        probmargin_scores = values[:, 0] - values[:, 1]
-        return probmargin_scores
-
-    # added by zoher
     def compute_entropy_scores(
         self,
         sequences: torch.Tensor,
@@ -1337,15 +1306,22 @@ class GenerationMixin:
         scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
         probs = torch.nn.functional.softmax(scores, dim=1)
         logprobs = torch.nn.functional.log_softmax(scores, dim=1)
+        
+        # 9. Compute the scores
+        max_prob_scores = torch.max(probs, dim=1).values
+        values, _ = torch.topk(probs, 2, dim=1)
+        diff_prob_scores = values[:, 0] - values[:, 1]
         entropy_scores = -torch.nansum(torch.mul(probs, logprobs), dim=1)
 
         # 9. Mask out entropy_scores of beams that stopped early
+        max_prob_scores[beam_indices_mask] = 0
+        diff_prob_scores[beam_indices_mask] = 0
         entropy_scores[beam_indices_mask] = 0
 
-        return entropy_scores
+        return max_prob_scores, diff_prob_scores, entropy_scores    
 
     # added by zoher
-    def compute_diff_prob_scores(
+    def compute_cum_label_entropy_scores(
         self,
         sequences: torch.Tensor,
         label_groups: List[torch.Tensor],
@@ -1373,63 +1349,27 @@ class GenerationMixin:
         probs = torch.nn.functional.softmax(scores, dim=1)
         
         # 9. Repeat the torch label groups for each beam and every token step
-        label_groups = [label_group.reshape(1, len(label_group), 1).repeat(probs.shape[0], 1, probs.shape[2]) for label_group in label_groups]
+        num_groups, num_members = label_groups.shape
+        reshaped_label_groups = label_groups.reshape(num_groups*num_members)
+        
+        # 10. Compute the label probabilities for group, beam and token step and reshape
+        label_groups_probs = torch.index_select(probs, 1, reshaped_label_groups).reshape(probs.shape[0], num_groups, num_members, probs.shape[2])
         
         # 10. Compute the label probabilities for each beam and every token step, index 1 = num of groups, index 2 = num of beams, index 3 = num of token steps
-        label_probs = torch.stack([torch.sum(torch.gather(probs, 1, label_group), dim=1) for label_group in label_groups])
-
-        # 11. Mask out entropy_scores of beams that stopped early
-        beam_indices_mask = beam_indices_mask.repeat(label_probs.shape[0],1,1)
-        label_probs[beam_indices_mask] = 0
-
-        return label_probs
-
-    # added by zoher
-    def compute_label_entropy_scores(
-        self,
-        sequences: torch.Tensor,
-        label_groups: List[torch.Tensor],
-        scores: Tuple[torch.Tensor],
-        beam_indices: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-
-        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
-        # to a beam search approach were the first (and only) beam is always selected
-        if beam_indices is None:
-            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
-            beam_indices = beam_indices.expand(-1, len(scores))
-
-        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
-        # seq_len - input_length
-        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
-
-        # 4. cut beam_indices to longest beam length
-        beam_indices_mask = beam_indices < 0
-        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
-        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
-
-        # 8. Compute scores
-        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
-        probs = torch.nn.functional.softmax(scores, dim=1)
-        
-        # 9. Repeat the torch label groups for each beam and every token step
-        label_groups = [label_group.reshape(1, len(label_group), 1).repeat(probs.shape[0], 1, probs.shape[2]) for label_group in label_groups]
-        
-        # 10. Compute the label probabilities for each beam and every token step, index 1 = num of groups, index 2 = num of beams, index 3 = num of token steps
-        cum_label_probs = torch.stack([torch.sum(torch.gather(probs, 1, label_group), dim=1) for label_group in label_groups])
+        cum_label_probs = torch.sum(label_groups_probs, dim=2)
         
         # finding the top 2 max cumulative groups
-        top2_cum_label_scores = torch.topk(cum_label_probs, 2, dim=0).values
+        top2_cum_label_scores = torch.topk(cum_label_probs, 2, dim=1).values
         
         # the max cumulative group
-        max_cum_label_prob_scores = top2_cum_label_scores[0,:,:]
+        max_cum_label_prob_scores = top2_cum_label_scores[:,0,:]
         
         # taking the difference between the top two maxcumulative probability of the label groups
-        diff_cum_label_prob_scores = torch.diff(top2_cum_label_scores, dim=0).squeeze(0)
+        diff_cum_label_prob_scores = top2_cum_label_scores[:,0,:] - top2_cum_label_scores[:,1,:]
         
         cum_label_logprobs = torch.log(cum_label_probs)
         
-        cum_label_entropy_scores = -torch.nansum(torch.mul(cum_label_probs, cum_label_logprobs), dim=0)
+        cum_label_entropy_scores = -torch.nansum(torch.mul(cum_label_probs, cum_label_logprobs), dim=1)
 
         # 11. Mask out entropy_scores of beams that stopped early
         max_cum_label_prob_scores[beam_indices_mask] = 0
