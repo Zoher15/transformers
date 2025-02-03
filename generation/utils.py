@@ -3388,6 +3388,8 @@ class GenerationMixin:
             model_inputs.update({"output_hidden_states": output_hidden_states} if output_hidden_states else {})
 
             if is_prefill:
+                if 'top_k_beams' in model_inputs:
+                    del model_inputs['top_k_beams']
                 outputs = self(**model_inputs, return_dict=True)
                 is_prefill = False
             else:
