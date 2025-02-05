@@ -1378,7 +1378,7 @@ class GenerationMixin:
         diff_cum_label_prob_scores[beam_indices_mask] = 0
         cum_label_entropy_scores[beam_indices_mask] = 0
 
-        return max_cum_label_prob_scores, diff_cum_label_prob_scores, cum_label_entropy_scores, top2_cum_label_scores 
+        return max_cum_label_prob_scores, diff_cum_label_prob_scores, cum_label_entropy_scores
 
     # added by zoher
     def compute_mass_tokens(
