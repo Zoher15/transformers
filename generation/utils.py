@@ -1360,12 +1360,14 @@ class GenerationMixin:
         
         # finding the top 2 max cumulative groups
         top2_cum_label_scores = torch.topk(cum_label_probs, 2, dim=1).values
+        top2_cum_label_scores_sum = torch.sum(top2_cum_label_scores, dim=1)
+        top2_cum_label_scores_norm = top2_cum_label_scores/top2_cum_label_scores_sum
         
         # the max cumulative group
-        max_cum_label_prob_scores = top2_cum_label_scores[:,0,:]
+        max_cum_label_prob_scores = top2_cum_label_scores_norm[:,0,:]
         
         # taking the difference between the top two maxcumulative probability of the label groups
-        diff_cum_label_prob_scores = top2_cum_label_scores[:,0,:] - top2_cum_label_scores[:,1,:]
+        diff_cum_label_prob_scores = top2_cum_label_scores_norm[:,0,:] - top2_cum_label_scores_norm[:,1,:]
         
         cum_label_logprobs = torch.log(cum_label_probs)
         
@@ -1376,7 +1378,7 @@ class GenerationMixin:
         diff_cum_label_prob_scores[beam_indices_mask] = 0
         cum_label_entropy_scores[beam_indices_mask] = 0
 
-        return max_cum_label_prob_scores, diff_cum_label_prob_scores, cum_label_entropy_scores
+        return max_cum_label_prob_scores, diff_cum_label_prob_scores, cum_label_entropy_scores, top2_cum_label_scores 
 
     # added by zoher
     def compute_mass_tokens(
