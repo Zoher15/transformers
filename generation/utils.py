@@ -3383,6 +3383,8 @@ class GenerationMixin:
             if is_prefill:
                 if 'top_k_beams' in model_inputs:
                     del model_inputs['top_k_beams']
+                elif 'fewshot_beams' in model_inputs:
+                    del model_inputs['fewshot_beams']
                 outputs = self(**model_inputs, return_dict=True)
                 is_prefill = False
             else:
@@ -3454,6 +3456,14 @@ class GenerationMixin:
                 )
                 next_tokens = next_tokens.squeeze(0)
                 del model_kwargs["top_k_beams"]
+            elif "fewshot_beams" in model_kwargs:
+                k = model_kwargs["fewshot_beams"]
+                if do_sample:
+                    probs = nn.functional.softmax(next_token_scores.sum(dim=0))
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = next_token_scores.sum(dim=0).argmax()
+                next_tokens = next_token.repeat(k)
             else:
                 if do_sample:
                     probs = nn.functional.softmax(next_token_scores, dim=-1)
