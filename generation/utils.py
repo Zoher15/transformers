@@ -1366,10 +1366,9 @@ class GenerationMixin:
         label_groups_probs = torch.index_select(probs, 1, reshaped_label_groups).reshape(scores.shape[0], num_groups, num_members, scores.shape[2])
         
         # 10. Compute the label scores for each beam and every token step, index 1 = num of groups, index 2 = num of beams, index 3 = num of token steps
-        cum_label_scores = label_groups_scores.sum(dim=2)
         cum_label_probs = label_groups_probs.sum(dim=2)
 
-        return cum_label_scores, cum_label_probs
+        return label_groups_scores, cum_label_probs
 
     # added by zoher
     def compute_mass_tokens(
