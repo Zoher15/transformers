@@ -1345,6 +1345,133 @@ class GenerationMixin:
 
         return transition_scores
 
+    # added by zoher
+    def compute_vocab_scores(
+        self,
+        sequences: torch.Tensor,
+        scores: Tuple[torch.Tensor],
+        beam_indices: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+
+        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
+        # to a beam search approach were the first (and only) beam is always selected
+        if beam_indices is None:
+            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
+            beam_indices = beam_indices.expand(-1, len(scores))
+
+        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
+        # seq_len - input_length
+        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
+
+        # 4. cut beam_indices to longest beam length
+        beam_indices_mask = beam_indices < 0
+        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
+        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
+
+        # 8. Compute scores
+        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
+        probs = torch.nn.functional.softmax(scores, dim=1)
+        log_probs = torch.nn.functional.log_softmax(scores, dim=1)
+
+        
+        # 9. Compute the scores
+        entropy = -torch.nansum(torch.mul(probs, log_probs), dim=1)
+        gini = 1 - torch.nansum(torch.pow(probs, 2), dim=1)
+        
+        # 10. Compute score difference
+        # making the scores positive
+        top2_scores = torch.topk(scores, 2, dim=1).values
+        
+        # probs
+        top2_probs = torch.topk(probs, 2, dim=1).values
+
+        # 9. Mask out entropy of beams that stopped early
+        entropy[beam_indices_mask] = 0
+        gini[beam_indices_mask] = 0
+        
+        scores_min = scores.min(dim=1).values
+        scores_sum = scores.sum(dim=1)
+
+        return entropy, gini, top2_scores, top2_probs, scores_min, scores_sum
+    
+    # added by zoher
+    def compute_label_scores(
+        self,
+        sequences: torch.Tensor,
+        label_groups: List[torch.Tensor],
+        scores: Tuple[torch.Tensor],
+        beam_indices: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+
+        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
+        # to a beam search approach were the first (and only) beam is always selected
+        if beam_indices is None:
+            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
+            beam_indices = beam_indices.expand(-1, len(scores))
+
+        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
+        # seq_len - input_length
+        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
+
+        # 4. cut beam_indices to longest beam length
+        beam_indices_mask = beam_indices < 0
+        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
+        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
+
+        # 8. Compute scores
+        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
+        probs = torch.nn.functional.softmax(scores, dim=1)
+        
+        
+        # 9. Repeat the torch label groups for each beam and every token step
+        num_groups, num_members = label_groups.shape
+        reshaped_label_groups = label_groups.reshape(num_groups*num_members)
+        
+        # 10. Compute the label scores for group, beam and token step and reshape
+        label_groups_scores = torch.index_select(scores, 1, reshaped_label_groups).reshape(scores.shape[0], num_groups, num_members, scores.shape[2])
+        label_groups_probs = torch.index_select(probs, 1, reshaped_label_groups).reshape(scores.shape[0], num_groups, num_members, scores.shape[2])
+        
+        # 10. Compute the label scores for each beam and every token step, index 1 = num of groups, index 2 = num of beams, index 3 = num of token steps
+        cum_label_probs = label_groups_probs.sum(dim=2)
+
+        return label_groups_scores, cum_label_probs
+
+    # added by zoher
+    def compute_mass_tokens(
+        self,
+        sequences: torch.Tensor,
+        scores: Tuple[torch.Tensor],
+        beam_indices: Optional[torch.Tensor] = None,
+        top_p = 0.95
+    ) -> torch.Tensor:
+
+        # 1. In absence of `beam_indices`, we can assume that we come from e.g. greedy search, which is equivalent
+        # to a beam search approach were the first (and only) beam is always selected
+        if beam_indices is None:
+            beam_indices = torch.arange(scores[0].shape[0]).view(-1, 1).to(sequences.device)
+            beam_indices = beam_indices.expand(-1, len(scores))
+
+        # 2. reshape scores as [batch_size*vocab_size, # generation steps] with # generation steps being
+        # seq_len - input_length
+        scores = torch.stack(scores).reshape(len(scores), -1).transpose(0, 1)
+
+        # 4. cut beam_indices to longest beam length
+        beam_indices_mask = beam_indices < 0
+        max_beam_length = (1 - beam_indices_mask.long()).sum(-1).max()
+        beam_indices_mask = beam_indices_mask[:, :max_beam_length]
+
+        # 8. Compute scores
+        scores = scores.reshape(-1, self.config.vocab_size, scores.shape[-1])
+        sorted_logits, sorted_indices = torch.sort(scores, descending=False, dim=1)
+        cumulative_probs = sorted_logits.softmax(dim=1).cumsum(dim=1)
+        sorted_indices_to_keep = cumulative_probs > (1 - top_p)
+        mass_tokens = torch.sum(sorted_indices_to_keep, dim=1)
+        
+        # 9. Compute the mass of tokens with top_p probability
+        mass_tokens[beam_indices_mask] = 0
+
+        return mass_tokens
+
     def _validate_model_class(self):
         """
         Confirms that the model class is compatible with generation. If not, raises an exception that points to the
@@ -2083,7 +2210,8 @@ class GenerationMixin:
         generation_config, model_kwargs = self._prepare_generation_config(
             generation_config, use_model_defaults, **kwargs
         )
-        self._validate_model_kwargs(model_kwargs.copy())
+        # commented by zoher
+        # self._validate_model_kwargs(model_kwargs.copy())
         self._validate_assistant(assistant_model, tokenizer, assistant_tokenizer)
 
         # 2. Set generation parameters if not already defined
@@ -3283,6 +3411,11 @@ class GenerationMixin:
             model_inputs.update({"output_hidden_states": output_hidden_states} if output_hidden_states else {})
 
             if is_prefill:
+                # added by zoher
+                if 'top_k_beams' in model_inputs:
+                    del model_inputs['top_k_beams']
+                elif 'fewshot_beams' in model_inputs:
+                    del model_inputs['fewshot_beams']
                 outputs = self(**model_inputs, return_dict=True)
                 is_prefill = False
             else:
@@ -3305,6 +3438,20 @@ class GenerationMixin:
             # pre-process distribution
             next_token_scores = logits_processor(input_ids, next_token_logits)
 
+            # added by zoher
+            # zoher start
+            # torch.manual_seed(0)
+            # torch.cuda.manual_seed(0)
+            # torch.backends.cudnn.deterministic = True
+            # # if "top_p_linear_fade" in model_kwargs:
+            # #     if model_kwargs["top_p_linear_fade"] > 0:
+            # #         logits_warper[2].top_p = min(0.9, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            # #     else:
+            # #         logits_warper[2].top_p = max(0.0, logits_warper[2].top_p + model_kwargs["top_p_linear_fade"])
+            # if "temp_fade_exp" in model_kwargs and generation_config.temperature != 1:
+            #     logits_processor[0].temperature = max(1e-2, logits_processor[0].temperature/model_kwargs["temp_fade_exp"])
+            # zoher end
+
             # Store scores, attentions and hidden_states when required
             if return_dict_in_generate:
                 if output_scores:
@@ -3326,12 +3473,35 @@ class GenerationMixin:
                     )
 
             # token selection
-            if do_sample:
-                probs = nn.functional.softmax(next_token_scores, dim=-1)
-                # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
-                next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+            # added by zoher
+            '''
+            To do cot without prompting, we need to generate k diverse paths. The input has already been repeated k times (before passinge to generate). 
+            The next_token_scores for all k is the same. So we take the first one (index 0), get k top tokens, and set them as the next tokens. 
+            We also delete top_k_beams from model_kwargs so that it doesn't interfere with the next iteration. Everything will continue as normal.
+            '''
+            if "top_k_beams" in model_kwargs:
+                k = model_kwargs["top_k_beams"]
+                next_token_scores = next_token_scores[0].unsqueeze(0)
+                _, next_tokens = torch.topk(
+                    next_token_scores, k, dim=1, largest=True, sorted=True
+                )
+                next_tokens = next_tokens.squeeze(0)
+                del model_kwargs["top_k_beams"]
+            elif "fewshot_beams" in model_kwargs:
+                k = model_kwargs["fewshot_beams"]
+                if do_sample:
+                    probs = nn.functional.softmax(next_token_scores.sum(dim=0))
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = next_token_scores.sum(dim=0).argmax()
+                next_tokens = next_token.repeat(k)
             else:
-                next_tokens = torch.argmax(next_token_scores, dim=-1)
+                if do_sample:
+                    probs = nn.functional.softmax(next_token_scores, dim=-1)
+                    # TODO (joao): this OP throws "skipping cudagraphs due to ['incompatible ops']", find solution
+                    next_tokens = torch.multinomial(probs, num_samples=1).squeeze(1)
+                else:
+                    next_tokens = torch.argmax(next_token_scores, dim=-1)
 
             # finished sentences should have their next token be a padding token
             if has_eos_stopping_criteria:
