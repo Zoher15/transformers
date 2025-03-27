@@ -108,6 +108,7 @@ class IJepaPreTrainedModel(PreTrainedModel):
     supports_gradient_checkpointing = True
     _no_split_modules = ["IJepaEmbeddings", "IJepaLayer"]
     _supports_sdpa = True
+    _supports_flash_attn_2 = True
 
     def _init_weights(self, module: Union[nn.Linear, nn.Conv2d, nn.LayerNorm]) -> None:
         """Initialize the weights"""
@@ -155,7 +156,7 @@ class IJepaModel(IJepaPreTrainedModel, ViTModel):
         self.embeddings = IJepaEmbeddings(config, use_mask_token=use_mask_token)
 
 
-_IMAGE_CLASS_CHECKPOINT = "jmtzt/ijepa_vith14_1k"
+_IMAGE_CLASS_CHECKPOINT = "facebook/ijepa_vith14_1k"
 _IMAGE_CLASS_EXPECTED_OUTPUT = "Egyptian cat"
 
 

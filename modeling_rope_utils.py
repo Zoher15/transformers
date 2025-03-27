@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Optional, Tuple
+from typing import Optional
 
 from .configuration_utils import PretrainedConfig
 from .utils import is_torch_available, logging
@@ -31,7 +31,7 @@ def _compute_default_rope_parameters(
     device: Optional["torch.device"] = None,
     seq_len: Optional[int] = None,
     **rope_kwargs,
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies according to the original RoPE implementation
     Args:
@@ -73,7 +73,7 @@ def _compute_linear_scaling_rope_parameters(
     device: Optional["torch.device"] = None,
     seq_len: Optional[int] = None,
     **rope_kwargs,
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies with linear scaling. Credits to the Reddit user /u/kaiokendev
     Args:
@@ -114,7 +114,7 @@ def _compute_dynamic_ntk_parameters(
     device: Optional["torch.device"] = None,
     seq_len: Optional[int] = None,
     **rope_kwargs,
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies with NTK scaling. Credits to the Reddit users /u/bloc97 and /u/emozilla
     Args:
@@ -162,7 +162,7 @@ def _compute_dynamic_ntk_parameters(
 
 def _compute_yarn_parameters(
     config: PretrainedConfig, device: "torch.device", seq_len: Optional[int] = None, **rope_kwargs
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies with NTK scaling. Please refer to the
     [original paper](https://arxiv.org/abs/2309.00071)
@@ -241,7 +241,7 @@ def _compute_yarn_parameters(
 
 def _compute_longrope_parameters(
     config: PretrainedConfig, device: "torch.device", seq_len: Optional[int] = None, **rope_kwargs
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies with LongRoPE scaling. Please refer to the
     [original implementation](https://github.com/microsoft/LongRoPE)
@@ -279,25 +279,20 @@ def _compute_longrope_parameters(
     # `original_max_position_embeddings` field containing the pretrained value. They use the ratio between these two
     # values to compute the default attention scaling factor, instead of using `factor`.
     if hasattr(config, "original_max_position_embeddings"):
-        if seq_len and seq_len < config.original_max_position_embeddings:
-            expanded_max_position_embeddings = config.original_max_position_embeddings
-        else:
-            expanded_max_position_embeddings = config.max_position_embeddings
-        max_position_embeddings = config.original_max_position_embeddings
-        factor = expanded_max_position_embeddings / max_position_embeddings
+        original_max_position_embeddings = config.original_max_position_embeddings
+        factor = config.max_position_embeddings / config.original_max_position_embeddings
     else:
-        max_position_embeddings = config.max_position_embeddings
-        expanded_max_position_embeddings = max_position_embeddings * factor
+        original_max_position_embeddings = config.max_position_embeddings
 
     # Sets the attention factor as suggested in the paper
     if attention_factor is None:
         if factor <= 1.0:
             attention_factor = 1.0
         else:
-            attention_factor = math.sqrt(1 + math.log(factor) / math.log(max_position_embeddings))
+            attention_factor = math.sqrt(1 + math.log(factor) / math.log(original_max_position_embeddings))
 
     # Compute the inverse frequencies -- scaled based on the target sequence length
-    if expanded_max_position_embeddings > max_position_embeddings:
+    if seq_len and seq_len > original_max_position_embeddings:
         ext_factors = torch.tensor(long_factor, dtype=torch.float32, device=device)
     else:
         ext_factors = torch.tensor(short_factor, dtype=torch.float32, device=device)
@@ -309,7 +304,7 @@ def _compute_longrope_parameters(
 
 def _compute_llama3_parameters(
     config: PretrainedConfig, device: "torch.device", seq_len: Optional[int] = None, **rope_kwargs
-) -> Tuple["torch.Tensor", float]:
+) -> tuple["torch.Tensor", float]:
     """
     Computes the inverse frequencies for llama 3.1.
 
