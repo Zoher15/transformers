@@ -14,7 +14,6 @@
 # limitations under the License.
 """TensorFlow VisionTextDualEncoder model."""
 
-
 from __future__ import annotations
 
 import re
@@ -466,8 +465,8 @@ class TFVisionTextDualEncoderModel(TFPreTrainedModel):
     @classmethod
     def from_vision_text_pretrained(
         cls,
-        vision_model_name_or_path: str = None,
-        text_model_name_or_path: str = None,
+        vision_model_name_or_path: Optional[str] = None,
+        text_model_name_or_path: Optional[str] = None,
         *model_args,
         **kwargs,
     ) -> TFPreTrainedModel:
@@ -620,3 +619,6 @@ class TFVisionTextDualEncoderModel(TFPreTrainedModel):
         pixel_values = tf.constant(VISION_DUMMY_INPUTS)
         dummy = {"pixel_values": pixel_values, "input_ids": input_ids}
         return dummy
+
+
+__all__ = ["TFVisionTextDualEncoderModel"]

@@ -31,7 +31,14 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_torch_available, is_torch_tensor, is_vision_available, logging
+from ...utils import (
+    TensorType,
+    filter_out_non_signature_kwargs,
+    is_torch_available,
+    is_torch_tensor,
+    is_vision_available,
+    logging,
+)
 
 
 if is_vision_available():
@@ -213,21 +220,21 @@ class MobileViTImageProcessor(BaseImageProcessor):
     def _preprocess_image(
         self,
         image: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_center_crop: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_flip_channel_order: bool = None,
+        do_flip_channel_order: Optional[bool] = None,
         data_format: Optional[Union[str, ChannelDimension]] = None,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
     ) -> np.ndarray:
         """Preprocesses a single image."""
         # All transformations expect numpy arrays.
         image = to_numpy_array(image)
-        if is_scaled_image(image) and do_rescale:
+        if do_rescale and is_scaled_image(image):
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -255,9 +262,9 @@ class MobileViTImageProcessor(BaseImageProcessor):
     def _preprocess_mask(
         self,
         segmentation_map: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
     ) -> np.ndarray:
@@ -290,22 +297,22 @@ class MobileViTImageProcessor(BaseImageProcessor):
         segmentation_map = segmentation_map.astype(np.int64)
         return segmentation_map
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
         segmentation_maps: Optional[ImageInput] = None,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_center_crop: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_flip_channel_order: bool = None,
+        do_flip_channel_order: Optional[bool] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -366,6 +373,7 @@ class MobileViTImageProcessor(BaseImageProcessor):
         crop_size = get_size_dict(crop_size, param_name="crop_size")
 
         images = make_list_of_images(images)
+
         if segmentation_maps is not None:
             segmentation_maps = make_list_of_images(segmentation_maps, expected_ndims=2)
 
@@ -472,3 +480,6 @@ class MobileViTImageProcessor(BaseImageProcessor):
             semantic_segmentation = [semantic_segmentation[i] for i in range(semantic_segmentation.shape[0])]
 
         return semantic_segmentation
+
+
+__all__ = ["MobileViTImageProcessor"]

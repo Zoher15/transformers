@@ -39,7 +39,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, logging
+from ...utils import TensorType, filter_out_non_signature_kwargs, logging
 from ...utils.import_utils import is_vision_available
 
 
@@ -295,25 +295,25 @@ class DonutImageProcessor(BaseImageProcessor):
         )
         return resized_image
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_thumbnail: bool = None,
-        do_align_long_axis: bool = None,
-        do_pad: bool = None,
+        do_thumbnail: Optional[bool] = None,
+        do_align_long_axis: Optional[bool] = None,
+        do_pad: Optional[bool] = None,
         random_padding: bool = False,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: Optional[ChannelDimension] = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -409,7 +409,7 @@ class DonutImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
 
-        if is_scaled_image(images[0]) and do_rescale:
+        if do_rescale and is_scaled_image(images[0]):
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -457,3 +457,6 @@ class DonutImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": images}
         return BatchFeature(data=data, tensor_type=return_tensors)
+
+
+__all__ = ["DonutImageProcessor"]

@@ -12,12 +12,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch OneFormer model."""
+"""PyTorch OneFormer model."""
+
 import copy
 import math
 import warnings
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -51,11 +52,6 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "OneFormerConfig"
 _CHECKPOINT_FOR_DOC = "shi-labs/oneformer_ade20k_swin_tiny"
 
-ONEFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "shi-labs/oneformer_ade20k_swin_tiny",
-    # See all OneFormer models at https://huggingface.co/models?filter=oneformer
-]
-
 
 if is_scipy_available():
     from scipy.optimize import linear_sum_assignment
@@ -65,13 +61,15 @@ def _get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
-# Copied from transformers.models.deformable_detr.modeling_deformable_detr.multi_scale_deformable_attention
 def multi_scale_deformable_attention(
-    value: Tensor, value_spatial_shapes: Tensor, sampling_locations: Tensor, attention_weights: Tensor
+    value: Tensor,
+    value_spatial_shapes: Union[Tensor, List[Tuple]],
+    sampling_locations: Tensor,
+    attention_weights: Tensor,
 ) -> Tensor:
     batch_size, _, num_heads, hidden_dim = value.shape
     _, num_queries, num_heads, num_levels, num_points, _ = sampling_locations.shape
-    value_list = value.split([height.item() * width.item() for height, width in value_spatial_shapes], dim=1)
+    value_list = value.split([height * width for height, width in value_spatial_shapes], dim=1)
     sampling_grids = 2 * sampling_locations - 1
     sampling_value_list = []
     for level_id, (height, width) in enumerate(value_spatial_shapes):
@@ -201,10 +199,9 @@ def pair_wise_sigmoid_cross_entropy_loss(inputs: torch.Tensor, labels: torch.Ten
     cross_entropy_loss_pos = criterion(inputs, torch.ones_like(inputs))
     cross_entropy_loss_neg = criterion(inputs, torch.zeros_like(inputs))
 
-    loss_pos = torch.matmul(cross_entropy_loss_pos, labels.T)
-    loss_neg = torch.matmul(cross_entropy_loss_neg, (1 - labels).T)
+    loss_pos = torch.matmul(cross_entropy_loss_pos / height_and_width, labels.T)
+    loss_neg = torch.matmul(cross_entropy_loss_neg / height_and_width, (1 - labels).T)
     loss = loss_pos + loss_neg
-    loss = loss / height_and_width
     return loss
 
 
@@ -361,7 +358,7 @@ class OneFormerLoss(nn.Module):
         num_points: int,
         oversample_ratio: float,
         importance_sample_ratio: float,
-        contrastive_temperature: float = None,
+        contrastive_temperature: Optional[float] = None,
     ):
         """
         This class computes the losses using the class predictions, mask predictions and the contrastive queries.
@@ -757,10 +754,10 @@ class OneFormerTransformerDecoderOutput(BaseModelOutput):
             Tuple of class and mask predictions from each layer of the transformer decoder.
     """
 
-    object_queries: torch.FloatTensor = None
+    object_queries: Optional[torch.FloatTensor] = None
     contrastive_logits: Optional[torch.FloatTensor] = None
-    prediction_masks: torch.FloatTensor = None
-    prediction_class: torch.FloatTensor = None
+    prediction_masks: Optional[torch.FloatTensor] = None
+    prediction_class: Optional[torch.FloatTensor] = None
     auxiliary_predictions: Optional[Tuple[Dict[str, torch.FloatTensor]]] = None
 
 
@@ -785,7 +782,7 @@ class OneFormerPixelDecoderOutput(ModelOutput):
     """
 
     multi_scale_features: Tuple[torch.FloatTensor] = None
-    mask_features: torch.FloatTensor = None
+    mask_features: Optional[torch.FloatTensor] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
@@ -809,7 +806,7 @@ class OneFormerPixelLevelModuleOutput(ModelOutput):
 
     encoder_features: List[torch.FloatTensor] = None
     decoder_features: List[torch.FloatTensor] = None
-    decoder_last_feature: torch.FloatTensor = None
+    decoder_last_feature: Optional[torch.FloatTensor] = None
 
 
 @dataclass
@@ -852,13 +849,13 @@ class OneFormerModelOutput(ModelOutput):
     encoder_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     pixel_decoder_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     transformer_decoder_hidden_states: Optional[torch.FloatTensor] = None
-    transformer_decoder_object_queries: torch.FloatTensor = None
+    transformer_decoder_object_queries: Optional[torch.FloatTensor] = None
     transformer_decoder_contrastive_queries: Optional[torch.FloatTensor] = None
-    transformer_decoder_mask_predictions: torch.FloatTensor = None
-    transformer_decoder_class_predictions: torch.FloatTensor = None
+    transformer_decoder_mask_predictions: Optional[torch.FloatTensor] = None
+    transformer_decoder_class_predictions: Optional[torch.FloatTensor] = None
     transformer_decoder_auxiliary_predictions: Optional[Tuple[Dict[str, torch.FloatTensor]]] = None
     text_queries: Optional[torch.FloatTensor] = None
-    task_token: torch.FloatTensor = None
+    task_token: Optional[torch.FloatTensor] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
 
@@ -915,19 +912,19 @@ class OneFormerForUniversalSegmentationOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    class_queries_logits: torch.FloatTensor = None
-    masks_queries_logits: torch.FloatTensor = None
+    class_queries_logits: Optional[torch.FloatTensor] = None
+    masks_queries_logits: Optional[torch.FloatTensor] = None
     auxiliary_predictions: List[Dict[str, torch.FloatTensor]] = None
     encoder_hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     pixel_decoder_hidden_states: Optional[List[torch.FloatTensor]] = None
     transformer_decoder_hidden_states: Optional[torch.FloatTensor] = None
-    transformer_decoder_object_queries: torch.FloatTensor = None
+    transformer_decoder_object_queries: Optional[torch.FloatTensor] = None
     transformer_decoder_contrastive_queries: Optional[torch.FloatTensor] = None
-    transformer_decoder_mask_predictions: torch.FloatTensor = None
-    transformer_decoder_class_predictions: torch.FloatTensor = None
+    transformer_decoder_mask_predictions: Optional[torch.FloatTensor] = None
+    transformer_decoder_class_predictions: Optional[torch.FloatTensor] = None
     transformer_decoder_auxiliary_predictions: Optional[List[Dict[str, torch.FloatTensor]]] = None
     text_queries: Optional[torch.FloatTensor] = None
-    task_token: torch.FloatTensor = None
+    task_token: Optional[torch.FloatTensor] = None
     attentions: Optional[Tuple[Tuple[torch.FloatTensor]]] = None
 
 
@@ -1088,7 +1085,7 @@ class OneFormerPixelDecoderEncoderLayer(nn.Module):
         self,
         hidden_states: torch.Tensor,
         attention_mask: torch.Tensor,
-        position_embeddings: torch.Tensor = None,
+        position_embeddings: Optional[torch.Tensor] = None,
         reference_points=None,
         spatial_shapes=None,
         level_start_index=None,
@@ -2612,7 +2609,7 @@ class OneFormerTextTransformer(nn.Module):
         width: int,
         layers: int,
         heads: int,
-        attn_mask: torch.Tensor = None,
+        attn_mask: Optional[torch.Tensor] = None,
         use_checkpoint=False,
         layer_norm_eps=1e-05,
     ):
@@ -3163,7 +3160,7 @@ class OneFormerForUniversalSegmentation(OneFormerPreTrainedModel):
 
         >>> # you can pass them to processor for semantic postprocessing
         >>> predicted_semantic_map = processor.post_process_semantic_segmentation(
-        ...     outputs, target_sizes=[image.size[::-1]]
+        ...     outputs, target_sizes=[(image.height, image.width)]
         ... )[0]
         >>> f"👉 Semantic Predictions Shape: {list(predicted_semantic_map.shape)}"
         '👉 Semantic Predictions Shape: [512, 683]'
@@ -3180,7 +3177,7 @@ class OneFormerForUniversalSegmentation(OneFormerPreTrainedModel):
 
         >>> # you can pass them to processor for instance postprocessing
         >>> predicted_instance_map = processor.post_process_instance_segmentation(
-        ...     outputs, target_sizes=[image.size[::-1]]
+        ...     outputs, target_sizes=[(image.height, image.width)]
         ... )[0]["segmentation"]
         >>> f"👉 Instance Predictions Shape: {list(predicted_instance_map.shape)}"
         '👉 Instance Predictions Shape: [512, 683]'
@@ -3197,7 +3194,7 @@ class OneFormerForUniversalSegmentation(OneFormerPreTrainedModel):
 
         >>> # you can pass them to processor for panoptic postprocessing
         >>> predicted_panoptic_map = processor.post_process_panoptic_segmentation(
-        ...     outputs, target_sizes=[image.size[::-1]]
+        ...     outputs, target_sizes=[(image.height, image.width)]
         ... )[0]["segmentation"]
         >>> f"👉 Panoptic Predictions Shape: {list(predicted_panoptic_map.shape)}"
         '👉 Panoptic Predictions Shape: [512, 683]'
@@ -3260,3 +3257,6 @@ class OneFormerForUniversalSegmentation(OneFormerPreTrainedModel):
             if loss is not None:
                 output = (loss) + output
         return output
+
+
+__all__ = ["OneFormerForUniversalSegmentation", "OneFormerModel", "OneFormerPreTrainedModel"]

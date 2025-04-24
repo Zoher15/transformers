@@ -33,7 +33,14 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_pytesseract_available, is_vision_available, logging, requires_backends
+from ...utils import (
+    TensorType,
+    filter_out_non_signature_kwargs,
+    is_pytesseract_available,
+    is_vision_available,
+    logging,
+    requires_backends,
+)
 
 
 if is_vision_available():
@@ -214,24 +221,24 @@ class LayoutLMv3ImageProcessor(BaseImageProcessor):
             **kwargs,
         )
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample=None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Union[float, Iterable[float]] = None,
         image_std: Union[float, Iterable[float]] = None,
-        apply_ocr: bool = None,
+        apply_ocr: Optional[bool] = None,
         ocr_lang: Optional[str] = None,
         tesseract_config: Optional[str] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -317,7 +324,7 @@ class LayoutLMv3ImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
 
-        if is_scaled_image(images[0]) and do_rescale:
+        if do_rescale and is_scaled_image(images[0]):
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -365,3 +372,6 @@ class LayoutLMv3ImageProcessor(BaseImageProcessor):
             data["words"] = words_batch
             data["boxes"] = boxes_batch
         return data
+
+
+__all__ = ["LayoutLMv3ImageProcessor"]

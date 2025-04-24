@@ -14,12 +14,11 @@
 # limitations under the License.
 """Image processor class for Beit."""
 
-import warnings
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 
-from ...image_processing_utils import BaseImageProcessor, BatchFeature, get_size_dict
+from ...image_processing_utils import INIT_SERVICE_KWARGS, BaseImageProcessor, BatchFeature, get_size_dict
 from ...image_transforms import resize, to_channel_dimension_format
 from ...image_utils import (
     IMAGENET_STANDARD_MEAN,
@@ -34,7 +33,15 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_torch_available, is_torch_tensor, is_vision_available, logging
+from ...utils import (
+    TensorType,
+    filter_out_non_signature_kwargs,
+    is_torch_available,
+    is_torch_tensor,
+    is_vision_available,
+    logging,
+)
+from ...utils.deprecation import deprecate_kwarg
 
 
 if is_vision_available():
@@ -92,6 +99,8 @@ class BeitImageProcessor(BaseImageProcessor):
 
     model_input_names = ["pixel_values"]
 
+    @deprecate_kwarg("reduce_labels", new_name="do_reduce_labels", version="4.41.0")
+    @filter_out_non_signature_kwargs(extra=INIT_SERVICE_KWARGS)
     def __init__(
         self,
         do_resize: bool = True,
@@ -107,13 +116,6 @@ class BeitImageProcessor(BaseImageProcessor):
         do_reduce_labels: bool = False,
         **kwargs,
     ) -> None:
-        if "reduce_labels" in kwargs:
-            warnings.warn(
-                "The `reduce_labels` parameter is deprecated and will be removed in a future version. Please use"
-                " `do_reduce_labels` instead.",
-                FutureWarning,
-            )
-            do_reduce_labels = kwargs.pop("reduce_labels")
         super().__init__(**kwargs)
         size = size if size is not None else {"height": 256, "width": 256}
         size = get_size_dict(size)
@@ -134,12 +136,11 @@ class BeitImageProcessor(BaseImageProcessor):
     @classmethod
     def from_dict(cls, image_processor_dict: Dict[str, Any], **kwargs):
         """
-        Overrides the `from_dict` method from the base class to make sure `reduce_labels` is updated if image processor
-        is created using from_dict and kwargs e.g. `BeitImageProcessor.from_pretrained(checkpoint, reduce_labels=True)`
+        Overrides the `from_dict` method from the base class to save support of deprecated `reduce_labels` in old configs
         """
         image_processor_dict = image_processor_dict.copy()
-        if "reduce_labels" in kwargs:
-            image_processor_dict["reduce_labels"] = kwargs.pop("reduce_labels")
+        if "reduce_labels" in image_processor_dict:
+            image_processor_dict["do_reduce_labels"] = image_processor_dict.pop("reduce_labels")
         return super().from_dict(image_processor_dict, **kwargs)
 
     def resize(
@@ -189,15 +190,15 @@ class BeitImageProcessor(BaseImageProcessor):
     def _preprocess(
         self,
         image: ImageInput,
-        do_reduce_labels: bool = None,
-        do_resize: bool = None,
+        do_reduce_labels: Optional[bool] = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
@@ -222,14 +223,14 @@ class BeitImageProcessor(BaseImageProcessor):
     def _preprocess_image(
         self,
         image: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         data_format: Optional[Union[str, ChannelDimension]] = None,
@@ -238,7 +239,7 @@ class BeitImageProcessor(BaseImageProcessor):
         """Preprocesses a single image."""
         # All transformations expect numpy arrays.
         image = to_numpy_array(image)
-        if is_scaled_image(image) and do_rescale:
+        if do_rescale and is_scaled_image(image):
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -267,12 +268,12 @@ class BeitImageProcessor(BaseImageProcessor):
     def _preprocess_segmentation_map(
         self,
         segmentation_map: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_reduce_labels: bool = None,
+        do_reduce_labels: Optional[bool] = None,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
     ):
         """Preprocesses a single segmentation map."""
@@ -310,25 +311,26 @@ class BeitImageProcessor(BaseImageProcessor):
         # be passed in as positional arguments.
         return super().__call__(images, segmentation_maps=segmentation_maps, **kwargs)
 
+    @deprecate_kwarg("reduce_labels", new_name="do_reduce_labels", version="4.41.0")
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
         segmentation_maps: Optional[ImageInput] = None,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         do_reduce_labels: Optional[bool] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -336,6 +338,9 @@ class BeitImageProcessor(BaseImageProcessor):
         Args:
             images (`ImageInput`):
                 Image to preprocess. Expects a single or batch of images with pixel values ranging from 0 to 255. If
+                passing in images with pixel values between 0 and 1, set `do_rescale=False`.
+            segmentation_maps (`ImageInput`, *optional*)
+                Segmentation maps to preprocess. Expects a single or batch of images with pixel values ranging from 0 to 255. If
                 passing in images with pixel values between 0 and 1, set `do_rescale=False`.
             do_resize (`bool`, *optional*, defaults to `self.do_resize`):
                 Whether to resize the image.
@@ -505,3 +510,6 @@ class BeitImageProcessor(BaseImageProcessor):
             semantic_segmentation = [semantic_segmentation[i] for i in range(semantic_segmentation.shape[0])]
 
         return semantic_segmentation
+
+
+__all__ = ["BeitImageProcessor"]

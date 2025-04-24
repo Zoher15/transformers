@@ -30,7 +30,14 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_pytesseract_available, is_vision_available, logging, requires_backends
+from ...utils import (
+    TensorType,
+    filter_out_non_signature_kwargs,
+    is_pytesseract_available,
+    is_vision_available,
+    logging,
+    requires_backends,
+)
 
 
 if is_vision_available():
@@ -187,19 +194,19 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
             **kwargs,
         )
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        apply_ocr: bool = None,
+        apply_ocr: Optional[bool] = None,
         ocr_lang: Optional[str] = None,
         tesseract_config: Optional[str] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -289,3 +296,6 @@ class LayoutLMv2ImageProcessor(BaseImageProcessor):
             data["words"] = words_batch
             data["boxes"] = boxes_batch
         return data
+
+
+__all__ = ["LayoutLMv2ImageProcessor"]

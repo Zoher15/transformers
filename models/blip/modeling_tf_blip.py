@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" TensorFlow BLIP model."""
+"""TensorFlow BLIP model."""
 
 from __future__ import annotations
 
@@ -47,18 +47,6 @@ from .modeling_tf_blip_text import BLIP_TEXT_INPUTS_DOCSTRING, TFBlipTextLMHeadM
 logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "Salesforce/blip-vqa-base"
-
-TF_BLIP_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "Salesforce/blip-vqa-base",
-    "Salesforce/blip-vqa-capfilt-large",
-    "Salesforce/blip-image-captioning-base",
-    "Salesforce/blip-image-captioning-large",
-    "Salesforce/blip-itm-base-coco",
-    "Salesforce/blip-itm-large-coco",
-    "Salesforce/blip-itm-base-flickr",
-    "Salesforce/blip-itm-large-flickr",
-    # See all BLIP models at https://huggingface.co/models?filter=blip
-]
 
 
 # Copied from transformers.models.clip.modeling_tf_clip.contrastive_loss
@@ -108,7 +96,7 @@ class TFBlipForConditionalGenerationModelOutput(ModelOutput):
     loss: Tuple[tf.Tensor] | None = None
     logits: Tuple[tf.Tensor] | None = None
     image_embeds: tf.Tensor | None = None
-    last_hidden_state: tf.Tensor = None
+    last_hidden_state: Optional[tf.Tensor] = None
     hidden_states: Tuple[tf.Tensor, ...] | None = None
     attentions: Tuple[tf.Tensor, ...] | None = None
 
@@ -150,7 +138,7 @@ class TFBlipTextVisionModelOutput(ModelOutput):
 
     loss: tf.Tensor | None = None
     image_embeds: tf.Tensor | None = None
-    last_hidden_state: tf.Tensor = None
+    last_hidden_state: Optional[tf.Tensor] = None
     hidden_states: Tuple[tf.Tensor, ...] | None = None
     attentions: Tuple[tf.Tensor, ...] | None = None
 
@@ -191,7 +179,7 @@ class TFBlipImageTextMatchingModelOutput(ModelOutput):
     itm_score: tf.Tensor | None = None
     loss: tf.Tensor | None = None
     image_embeds: tf.Tensor | None = None
-    last_hidden_state: tf.Tensor = None
+    last_hidden_state: Optional[tf.Tensor] = None
     hidden_states: Tuple[tf.Tensor, ...] | None = None
     vision_pooler_output: tf.Tensor | None = None
     attentions: Tuple[tf.Tensor, ...] | None = None
@@ -221,10 +209,10 @@ class TFBlipOutput(ModelOutput):
     """
 
     loss: tf.Tensor | None = None
-    logits_per_image: tf.Tensor = None
-    logits_per_text: tf.Tensor = None
-    text_embeds: tf.Tensor = None
-    image_embeds: tf.Tensor = None
+    logits_per_image: Optional[tf.Tensor] = None
+    logits_per_text: Optional[tf.Tensor] = None
+    text_embeds: Optional[tf.Tensor] = None
+    image_embeds: Optional[tf.Tensor] = None
     text_model_output: TFBaseModelOutputWithPooling = None
     vision_model_output: TFBaseModelOutputWithPooling = None
 
@@ -321,9 +309,9 @@ class TFBlipTextEmbeddings(keras.layers.Layer):
 
     def call(
         self,
-        input_ids: tf.Tensor = None,
-        position_ids: tf.Tensor = None,
-        inputs_embeds: tf.Tensor = None,
+        input_ids: Optional[tf.Tensor] = None,
+        position_ids: Optional[tf.Tensor] = None,
+        inputs_embeds: Optional[tf.Tensor] = None,
     ) -> tf.Tensor:
         """
         Applies embedding based on inputs tensor.
@@ -806,13 +794,13 @@ class TFBlipMainLayer(keras.layers.Layer):
         super().__init__(*args, **kwargs)
 
         if not isinstance(config.text_config, BlipTextConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.text_config is expected to be of type BlipTextConfig but is of type"
                 f" {type(config.text_config)}."
             )
 
         if not isinstance(config.vision_config, BlipVisionConfig):
-            raise ValueError(
+            raise TypeError(
                 "config.vision_config is expected to be of type BlipVisionConfig but is of type"
                 f" {type(config.vision_config)}."
             )
@@ -1708,3 +1696,14 @@ class TFBlipForImageTextRetrieval(TFBlipPreTrainedModel):
         if getattr(self, "itm_head", None) is not None:
             with tf.name_scope(self.itm_head.name):
                 self.itm_head.build([None, None, self.config.text_config.hidden_size])
+
+
+__all__ = [
+    "TFBlipModel",
+    "TFBlipPreTrainedModel",
+    "TFBlipForConditionalGeneration",
+    "TFBlipForQuestionAnswering",
+    "TFBlipVisionModel",
+    "TFBlipTextModel",
+    "TFBlipForImageTextRetrieval",
+]

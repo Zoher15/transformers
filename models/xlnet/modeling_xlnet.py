@@ -14,8 +14,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
- PyTorch XLNet model.
+PyTorch XLNet model.
 """
+
 import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple, Union
@@ -25,6 +26,7 @@ from torch import nn
 from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
 
 from ...activations import ACT2FN
+from ...generation import GenerationMixin
 from ...modeling_utils import PoolerAnswerClass, PoolerEndLogits, PoolerStartLogits, PreTrainedModel, SequenceSummary
 from ...pytorch_utils import apply_chunking_to_forward
 from ...utils import (
@@ -42,12 +44,6 @@ logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "xlnet/xlnet-base-cased"
 _CONFIG_FOR_DOC = "XLNetConfig"
-
-XLNET_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "xlnet/xlnet-base-cased",
-    "xlnet/xlnet-large-cased",
-    # See all XLNet models at https://huggingface.co/models?filter=xlnet
-]
 
 
 def build_tf_xlnet_to_pytorch_map(model, config, tf_weights=None):
@@ -168,15 +164,15 @@ def load_tf_weights_in_xlnet(model, config, tf_path):
             array = np.transpose(array)
         if isinstance(pointer, list):
             # Here we will split the TF weights
-            assert (
-                len(pointer) == array.shape[0]
-            ), f"Pointer length {len(pointer)} and array length {array.shape[0]} mismatched"
+            assert len(pointer) == array.shape[0], (
+                f"Pointer length {len(pointer)} and array length {array.shape[0]} mismatched"
+            )
             for i, p_i in enumerate(pointer):
                 arr_i = array[i, ...]
                 try:
-                    assert (
-                        p_i.shape == arr_i.shape
-                    ), f"Pointer shape {p_i.shape} and array shape {arr_i.shape} mismatched"
+                    assert p_i.shape == arr_i.shape, (
+                        f"Pointer shape {p_i.shape} and array shape {arr_i.shape} mismatched"
+                    )
                 except AssertionError as e:
                     e.args += (p_i.shape, arr_i.shape)
                     raise
@@ -184,9 +180,9 @@ def load_tf_weights_in_xlnet(model, config, tf_path):
                 p_i.data = torch.from_numpy(arr_i)
         else:
             try:
-                assert (
-                    pointer.shape == array.shape
-                ), f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched"
+                assert pointer.shape == array.shape, (
+                    f"Pointer shape {pointer.shape} and array shape {array.shape} mismatched"
+                )
             except AssertionError as e:
                 e.args += (pointer.shape, array.shape)
                 raise
@@ -640,7 +636,7 @@ class XLNetLMHeadModelOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
+    logits: Optional[torch.FloatTensor] = None
     mems: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -674,7 +670,7 @@ class XLNetForSequenceClassificationOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
+    logits: Optional[torch.FloatTensor] = None
     mems: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -708,7 +704,7 @@ class XLNetForTokenClassificationOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
+    logits: Optional[torch.FloatTensor] = None
     mems: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -744,7 +740,7 @@ class XLNetForMultipleChoiceOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    logits: torch.FloatTensor = None
+    logits: Optional[torch.FloatTensor] = None
     mems: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -780,8 +776,8 @@ class XLNetForQuestionAnsweringSimpleOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    start_logits: torch.FloatTensor = None
-    end_logits: torch.FloatTensor = None
+    start_logits: Optional[torch.FloatTensor] = None
+    end_logits: Optional[torch.FloatTensor] = None
     mems: Optional[List[torch.FloatTensor]] = None
     hidden_states: Optional[Tuple[torch.FloatTensor, ...]] = None
     attentions: Optional[Tuple[torch.FloatTensor, ...]] = None
@@ -1291,7 +1287,7 @@ class XLNetModel(XLNetPreTrainedModel):
     """,
     XLNET_START_DOCSTRING,
 )
-class XLNetLMHeadModel(XLNetPreTrainedModel):
+class XLNetLMHeadModel(XLNetPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_loss.weight"]
 
     def __init__(self, config):
@@ -1312,6 +1308,8 @@ class XLNetLMHeadModel(XLNetPreTrainedModel):
         self.lm_loss = new_embeddings
 
     def prepare_inputs_for_generation(self, input_ids, past_key_values=None, use_mems=None, **kwargs):
+        # Overwritten -- this model has unique input preparation
+
         # Add dummy token at the end (no attention on this one)
 
         effective_batch_size = input_ids.shape[0]
@@ -2084,3 +2082,16 @@ class XLNetForQuestionAnswering(XLNetPreTrainedModel):
                     hidden_states=transformer_outputs.hidden_states,
                     attentions=transformer_outputs.attentions,
                 )
+
+
+__all__ = [
+    "XLNetForMultipleChoice",
+    "XLNetForQuestionAnswering",
+    "XLNetForQuestionAnsweringSimple",
+    "XLNetForSequenceClassification",
+    "XLNetForTokenClassification",
+    "XLNetLMHeadModel",
+    "XLNetModel",
+    "XLNetPreTrainedModel",
+    "load_tf_weights_in_xlnet",
+]

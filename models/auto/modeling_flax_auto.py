@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Auto Model class."""
-
+"""Auto Model class."""
 
 from collections import OrderedDict
 
@@ -37,6 +36,7 @@ FLAX_MODEL_MAPPING_NAMES = OrderedDict(
         ("blenderbot-small", "FlaxBlenderbotSmallModel"),
         ("bloom", "FlaxBloomModel"),
         ("clip", "FlaxCLIPModel"),
+        ("dinov2", "FlaxDinov2Model"),
         ("distilbert", "FlaxDistilBertModel"),
         ("electra", "FlaxElectraModel"),
         ("gemma", "FlaxGemmaModel"),
@@ -123,8 +123,9 @@ FLAX_MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING_NAMES = OrderedDict(
 
 FLAX_MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING_NAMES = OrderedDict(
     [
-        # Model for Image-classsification
+        # Model for Image-classification
         ("beit", "FlaxBeitForImageClassification"),
+        ("dinov2", "FlaxDinov2ForImageClassification"),
         ("regnet", "FlaxRegNetForImageClassification"),
         ("resnet", "FlaxResNetForImageClassification"),
         ("vit", "FlaxViTForImageClassification"),

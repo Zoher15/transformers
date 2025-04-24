@@ -38,7 +38,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, is_vision_available, logging
+from ...utils import TensorType, filter_out_non_signature_kwargs, is_vision_available, logging
 
 
 if is_vision_available():
@@ -266,19 +266,19 @@ class TvpImageProcessor(BaseImageProcessor):
     def _preprocess_image(
         self,
         image: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
         do_pad: bool = True,
         pad_size: Dict[str, int] = None,
         constant_values: Union[float, Iterable[float]] = None,
         pad_mode: PaddingMode = None,
-        do_normalize: bool = None,
-        do_flip_channel_order: bool = None,
+        do_normalize: Optional[bool] = None,
+        do_flip_channel_order: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         data_format: Optional[ChannelDimension] = ChannelDimension.FIRST,
@@ -336,28 +336,28 @@ class TvpImageProcessor(BaseImageProcessor):
 
         return image
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         videos: Union[ImageInput, List[ImageInput], List[List[ImageInput]]],
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        do_pad: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        do_pad: Optional[bool] = None,
         pad_size: Dict[str, int] = None,
         constant_values: Union[float, Iterable[float]] = None,
         pad_mode: PaddingMode = None,
-        do_normalize: bool = None,
-        do_flip_channel_order: bool = None,
+        do_normalize: Optional[bool] = None,
+        do_flip_channel_order: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -476,3 +476,6 @@ class TvpImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": videos}
         return BatchFeature(data=data, tensor_type=return_tensors)
+
+
+__all__ = ["TvpImageProcessor"]

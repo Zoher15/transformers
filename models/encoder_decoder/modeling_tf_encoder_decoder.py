@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" Classes to support TF Encoder-Decoder architectures"""
-
+"""Classes to support TF Encoder-Decoder architectures"""
 
 from __future__ import annotations
 
@@ -312,8 +311,8 @@ class TFEncoderDecoderModel(TFPreTrainedModel, TFCausalLanguageModelingLoss):
     @classmethod
     def from_encoder_decoder_pretrained(
         cls,
-        encoder_pretrained_model_name_or_path: str = None,
-        decoder_pretrained_model_name_or_path: str = None,
+        encoder_pretrained_model_name_or_path: Optional[str] = None,
+        decoder_pretrained_model_name_or_path: Optional[str] = None,
         *model_args,
         **kwargs,
     ) -> TFPreTrainedModel:
@@ -661,3 +660,6 @@ class TFEncoderDecoderModel(TFPreTrainedModel, TFCausalLanguageModelingLoss):
         if getattr(self, "decoder", None) is not None:
             with tf.name_scope(self.decoder.name):
                 self.decoder.build(None)
+
+
+__all__ = ["TFEncoderDecoderModel"]

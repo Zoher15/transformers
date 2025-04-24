@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-""" PyTorch MaskFormer model."""
+"""PyTorch MaskFormer model."""
 
 import math
 from dataclasses import dataclass
@@ -27,6 +27,7 @@ from ...activations import ACT2FN
 from ...modeling_attn_mask_utils import _prepare_4d_attention_mask
 from ...modeling_outputs import BaseModelOutputWithCrossAttentions
 from ...modeling_utils import PreTrainedModel
+from ...pytorch_utils import is_torch_greater_or_equal_than_2_1
 from ...utils import (
     ModelOutput,
     add_start_docstrings,
@@ -38,6 +39,7 @@ from ...utils import (
     requires_backends,
 )
 from ...utils.backbone_utils import load_backbone
+from ...utils.import_utils import is_torchdynamo_compiling
 from ..detr import DetrConfig
 from .configuration_maskformer import MaskFormerConfig
 from .configuration_maskformer_swin import MaskFormerSwinConfig
@@ -55,11 +57,6 @@ logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "MaskFormerConfig"
 _CHECKPOINT_FOR_DOC = "facebook/maskformer-swin-base-ade"
-
-MASKFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
-    "facebook/maskformer-swin-base-ade",
-    # See all MaskFormer models at https://huggingface.co/models?filter=maskformer
-]
 
 
 @dataclass
@@ -143,7 +140,7 @@ class MaskFormerPixelDecoderOutput(ModelOutput):
             weighted average in the self-attention heads.
     """
 
-    last_hidden_state: torch.FloatTensor = None
+    last_hidden_state: Optional[torch.FloatTensor] = None
     hidden_states: Optional[Tuple[torch.FloatTensor]] = None
     attentions: Optional[Tuple[torch.FloatTensor]] = None
 
@@ -238,9 +235,9 @@ class MaskFormerForInstanceSegmentationOutput(ModelOutput):
     """
 
     loss: Optional[torch.FloatTensor] = None
-    class_queries_logits: torch.FloatTensor = None
-    masks_queries_logits: torch.FloatTensor = None
-    auxiliary_logits: torch.FloatTensor = None
+    class_queries_logits: Optional[torch.FloatTensor] = None
+    masks_queries_logits: Optional[torch.FloatTensor] = None
+    auxiliary_logits: Optional[torch.FloatTensor] = None
     encoder_last_hidden_state: Optional[torch.FloatTensor] = None
     pixel_decoder_last_hidden_state: Optional[torch.FloatTensor] = None
     transformer_decoder_last_hidden_state: Optional[torch.FloatTensor] = None
@@ -444,23 +441,7 @@ class DetrAttention(nn.Module):
     def _shape(self, tensor: torch.Tensor, seq_len: int, batch_size: int):
         return tensor.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2).contiguous()
 
-    def with_pos_embed(self, tensor: torch.Tensor, object_queries: Optional[Tensor], **kwargs):
-        position_embeddings = kwargs.pop("position_embeddings", None)
-
-        if kwargs:
-            raise ValueError(f"Unexpected arguments {kwargs.keys()}")
-
-        if position_embeddings is not None and object_queries is not None:
-            raise ValueError(
-                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
-            )
-
-        if position_embeddings is not None:
-            logger.warning_once(
-                "position_embeddings has been deprecated and will be removed in v4.34. Please use object_queries instead"
-            )
-            object_queries = position_embeddings
-
+    def with_pos_embed(self, tensor: torch.Tensor, object_queries: Optional[Tensor]):
         return tensor if object_queries is None else tensor + object_queries
 
     def forward(
@@ -471,38 +452,8 @@ class DetrAttention(nn.Module):
         key_value_states: Optional[torch.Tensor] = None,
         spatial_position_embeddings: Optional[torch.Tensor] = None,
         output_attentions: bool = False,
-        **kwargs,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor]]]:
         """Input shape: Batch x Time x Channel"""
-
-        position_embeddings = kwargs.pop("position_ebmeddings", None)
-        key_value_position_embeddings = kwargs.pop("key_value_position_embeddings", None)
-
-        if kwargs:
-            raise ValueError(f"Unexpected arguments {kwargs.keys()}")
-
-        if position_embeddings is not None and object_queries is not None:
-            raise ValueError(
-                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
-            )
-
-        if key_value_position_embeddings is not None and spatial_position_embeddings is not None:
-            raise ValueError(
-                "Cannot specify both key_value_position_embeddings and spatial_position_embeddings. Please use just spatial_position_embeddings"
-            )
-
-        if position_embeddings is not None:
-            logger.warning_once(
-                "position_embeddings has been deprecated and will be removed in v4.34. Please use object_queries instead"
-            )
-            object_queries = position_embeddings
-
-        if key_value_position_embeddings is not None:
-            logger.warning_once(
-                "key_value_position_embeddings has been deprecated and will be removed in v4.34. Please use spatial_position_embeddings instead"
-            )
-            spatial_position_embeddings = key_value_position_embeddings
-
         # if key_value_states are provided this layer is used as a cross-attention layer
         # for the decoder
         is_cross_attention = key_value_states is not None
@@ -620,7 +571,6 @@ class DetrDecoderLayer(nn.Module):
         encoder_hidden_states: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         output_attentions: Optional[bool] = False,
-        **kwargs,
     ):
         """
         Args:
@@ -643,22 +593,6 @@ class DetrDecoderLayer(nn.Module):
                 Whether or not to return the attentions tensors of all attention layers. See `attentions` under
                 returned tensors for more detail.
         """
-        position_embeddings = kwargs.pop("position_embeddings", None)
-
-        if kwargs:
-            raise ValueError(f"Unexpected arguments {kwargs.keys()}")
-
-        if position_embeddings is not None and object_queries is not None:
-            raise ValueError(
-                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
-            )
-
-        if position_embeddings is not None:
-            logger.warning_once(
-                "position_embeddings has been deprecated and will be removed in v4.34. Please use object_queries instead"
-            )
-            object_queries = position_embeddings
-
         residual = hidden_states
 
         # Self Attention
@@ -746,7 +680,6 @@ class DetrDecoder(nn.Module):
         output_attentions=None,
         output_hidden_states=None,
         return_dict=None,
-        **kwargs,
     ):
         r"""
         Args:
@@ -783,21 +716,6 @@ class DetrDecoder(nn.Module):
             return_dict (`bool`, *optional*):
                 Whether or not to return a [`~utils.ModelOutput`] instead of a plain tuple.
         """
-        position_embeddings = kwargs.pop("position_embeddings", None)
-        if kwargs:
-            raise ValueError(f"Unexpected arguments {kwargs.keys()}")
-
-        if position_embeddings is not None and object_queries is not None:
-            raise ValueError(
-                "Cannot specify both position_embeddings and object_queries. Please use just object_queries"
-            )
-
-        if position_embeddings is not None:
-            logger.warning_once(
-                "position_embeddings has been deprecated and will be removed in v4.34. Please use object_queries instead"
-            )
-            object_queries = position_embeddings
-
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
         output_hidden_states = (
             output_hidden_states if output_hidden_states is not None else self.config.output_hidden_states
@@ -1506,7 +1424,11 @@ class MaskFormerTransformerModule(nn.Module):
         # repeat the queries "q c -> b q c"
         batch_size = image_features.shape[0]
         queries_embeddings = self.queries_embedder.weight.unsqueeze(0).repeat(batch_size, 1, 1)
-        inputs_embeds = torch.zeros_like(queries_embeddings, requires_grad=True)
+        inputs_embeds = torch.zeros_like(queries_embeddings, requires_grad=self.training)
+
+        # torch.export.export does no support requires_grad
+        if self.training:
+            inputs_embeds.requires_grad_(True)
 
         batch_size, num_channels, height, width = image_features.shape
         # rearrange both image_features and object_queries "b c h w -> b (h w) c"
@@ -1762,6 +1684,8 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
         pixel_embeddings = outputs.pixel_decoder_last_hidden_state
         # get the auxiliary predictions (one for each decoder's layer)
         auxiliary_logits: List[str, Tensor] = []
+
+        is_tracing = torch.jit.is_tracing() or isinstance(outputs, torch.fx.Proxy) or is_torchdynamo_compiling()
         # This code is a little bit cumbersome, an improvement can be to return a list of predictions. If we have auxiliary loss then we are going to return more than one element in the list
         if self.config.use_auxiliary_loss:
             stacked_transformer_decoder_outputs = torch.stack(outputs.transformer_decoder_hidden_states)
@@ -1770,14 +1694,17 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
             # get the masks
             mask_embeddings = self.mask_embedder(stacked_transformer_decoder_outputs)
 
-            # Equivalent to einsum('lbqc, bchw -> lbqhw') but jit friendly
-            num_embeddings, batch_size, num_queries, num_channels = mask_embeddings.shape
-            _, _, height, width = pixel_embeddings.shape
-            binaries_masks = torch.zeros(
-                (num_embeddings, batch_size, num_queries, height, width), device=mask_embeddings.device
-            )
-            for c in range(num_channels):
-                binaries_masks += mask_embeddings[..., c][..., None, None] * pixel_embeddings[None, :, None, c]
+            if is_tracing and not is_torch_greater_or_equal_than_2_1:
+                # Equivalent to einsum('lbqc, bchw -> lbqhw') but jit friendly
+                num_embeddings, batch_size, num_queries, num_channels = mask_embeddings.shape
+                _, _, height, width = pixel_embeddings.shape
+                binaries_masks = torch.zeros(
+                    (num_embeddings, batch_size, num_queries, height, width), device=mask_embeddings.device
+                )
+                for c in range(num_channels):
+                    binaries_masks += mask_embeddings[..., c][..., None, None] * pixel_embeddings[None, :, None, c]
+            else:
+                binaries_masks = torch.einsum("lbqc, bchw -> lbqhw", mask_embeddings, pixel_embeddings)
 
             masks_queries_logits = binaries_masks[-1]
             # go til [:-1] because the last one is always used
@@ -1794,12 +1721,17 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
             mask_embeddings = self.mask_embedder(transformer_decoder_hidden_states)
             # sum up over the channels
 
-            # Equivalent to einsum('bqc, bchw -> bqhw') but jit friendly
-            batch_size, num_queries, num_channels = mask_embeddings.shape
-            _, _, height, width = pixel_embeddings.shape
-            masks_queries_logits = torch.zeros((batch_size, num_queries, height, width), device=mask_embeddings.device)
-            for c in range(num_channels):
-                masks_queries_logits += mask_embeddings[..., c][..., None, None] * pixel_embeddings[:, None, c]
+            if is_tracing and not is_torch_greater_or_equal_than_2_1:
+                # Equivalent to einsum('bqc, bchw -> bqhw') but jit friendly
+                batch_size, num_queries, num_channels = mask_embeddings.shape
+                _, _, height, width = pixel_embeddings.shape
+                masks_queries_logits = torch.zeros(
+                    (batch_size, num_queries, height, width), device=mask_embeddings.device
+                )
+                for c in range(num_channels):
+                    masks_queries_logits += mask_embeddings[..., c][..., None, None] * pixel_embeddings[:, None, c]
+            else:
+                masks_queries_logits = torch.einsum("bqc, bchw -> bqhw", mask_embeddings, pixel_embeddings)
 
         return class_queries_logits, masks_queries_logits, auxiliary_logits
 
@@ -1852,7 +1784,7 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
 
         >>> # you can pass them to image_processor for postprocessing
         >>> predicted_semantic_map = image_processor.post_process_semantic_segmentation(
-        ...     outputs, target_sizes=[image.size[::-1]]
+        ...     outputs, target_sizes=[(image.height, image.width)]
         ... )[0]
 
         >>> # we refer to the demo notebooks for visualization (see "Resources" section in the MaskFormer docs)
@@ -1882,7 +1814,7 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
         >>> masks_queries_logits = outputs.masks_queries_logits
 
         >>> # you can pass them to image_processor for postprocessing
-        >>> result = image_processor.post_process_panoptic_segmentation(outputs, target_sizes=[image.size[::-1]])[0]
+        >>> result = image_processor.post_process_panoptic_segmentation(outputs, target_sizes=[(image.height, image.width)])[0]
 
         >>> # we refer to the demo notebooks for visualization (see "Resources" section in the MaskFormer docs)
         >>> predicted_panoptic_map = result["segmentation"]
@@ -1948,3 +1880,6 @@ class MaskFormerForInstanceSegmentation(MaskFormerPreTrainedModel):
             masks_queries_logits=masks_queries_logits,
             auxiliary_logits=auxiliary_logits,
         )
+
+
+__all__ = ["MaskFormerForInstanceSegmentation", "MaskFormerModel", "MaskFormerPreTrainedModel"]

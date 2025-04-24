@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Image processor class for Vivit."""
+
 from typing import Dict, List, Optional, Union
 
 import numpy as np
@@ -40,7 +41,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import logging
+from ...utils import filter_out_non_signature_kwargs, logging
 
 
 if is_vision_available():
@@ -226,15 +227,15 @@ class VivitImageProcessor(BaseImageProcessor):
     def _preprocess_image(
         self,
         image: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        offset: bool = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        offset: Optional[bool] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         data_format: Optional[ChannelDimension] = ChannelDimension.FIRST,
@@ -261,7 +262,7 @@ class VivitImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         image = to_numpy_array(image)
 
-        if is_scaled_image(image) and do_rescale:
+        if do_rescale and is_scaled_image(image):
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -285,24 +286,24 @@ class VivitImageProcessor(BaseImageProcessor):
         image = to_channel_dimension_format(image, data_format, input_channel_dim=input_data_format)
         return image
 
+    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         videos: ImageInput,
-        do_resize: bool = None,
+        do_resize: Optional[bool] = None,
         size: Dict[str, int] = None,
         resample: PILImageResampling = None,
-        do_center_crop: bool = None,
+        do_center_crop: Optional[bool] = None,
         crop_size: Dict[str, int] = None,
-        do_rescale: bool = None,
-        rescale_factor: float = None,
-        offset: bool = None,
-        do_normalize: bool = None,
+        do_rescale: Optional[bool] = None,
+        rescale_factor: Optional[float] = None,
+        offset: Optional[bool] = None,
+        do_normalize: Optional[bool] = None,
         image_mean: Optional[Union[float, List[float]]] = None,
         image_std: Optional[Union[float, List[float]]] = None,
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
-        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -401,3 +402,6 @@ class VivitImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": videos}
         return BatchFeature(data=data, tensor_type=return_tensors)
+
+
+__all__ = ["VivitImageProcessor"]
