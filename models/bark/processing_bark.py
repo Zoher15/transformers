@@ -15,7 +15,6 @@
 """
 Processor class for Bark
 """
-
 import json
 import os
 from typing import Optional
@@ -25,7 +24,7 @@ import numpy as np
 from ...feature_extraction_utils import BatchFeature
 from ...processing_utils import ProcessorMixin
 from ...utils import logging
-from ...utils.hub import cached_file
+from ...utils.hub import get_file_from_repo
 from ..auto import AutoTokenizer
 
 
@@ -86,20 +85,17 @@ class BarkProcessor(ProcessorMixin):
         """
 
         if speaker_embeddings_dict_path is not None:
-            speaker_embeddings_path = cached_file(
+            speaker_embeddings_path = get_file_from_repo(
                 pretrained_processor_name_or_path,
                 speaker_embeddings_dict_path,
                 subfolder=kwargs.pop("subfolder", None),
                 cache_dir=kwargs.pop("cache_dir", None),
                 force_download=kwargs.pop("force_download", False),
                 proxies=kwargs.pop("proxies", None),
-                resume_download=kwargs.pop("resume_download", None),
+                resume_download=kwargs.pop("resume_download", False),
                 local_files_only=kwargs.pop("local_files_only", False),
                 token=kwargs.pop("use_auth_token", None),
                 revision=kwargs.pop("revision", None),
-                _raise_exceptions_for_gated_repo=False,
-                _raise_exceptions_for_missing_entries=False,
-                _raise_exceptions_for_connection_errors=False,
             )
             if speaker_embeddings_path is None:
                 logger.warning(
@@ -185,20 +181,17 @@ class BarkProcessor(ProcessorMixin):
                     f"Voice preset unrecognized, missing {key} as a key in self.speaker_embeddings[{voice_preset}]."
                 )
 
-            path = cached_file(
+            path = get_file_from_repo(
                 self.speaker_embeddings.get("repo_or_path", "/"),
                 voice_preset_paths[key],
                 subfolder=kwargs.pop("subfolder", None),
                 cache_dir=kwargs.pop("cache_dir", None),
                 force_download=kwargs.pop("force_download", False),
                 proxies=kwargs.pop("proxies", None),
-                resume_download=kwargs.pop("resume_download", None),
+                resume_download=kwargs.pop("resume_download", False),
                 local_files_only=kwargs.pop("local_files_only", False),
                 token=kwargs.pop("use_auth_token", None),
                 revision=kwargs.pop("revision", None),
-                _raise_exceptions_for_gated_repo=False,
-                _raise_exceptions_for_missing_entries=False,
-                _raise_exceptions_for_connection_errors=False,
             )
             if path is None:
                 raise ValueError(
@@ -217,7 +210,7 @@ class BarkProcessor(ProcessorMixin):
                 raise ValueError(f"Voice preset unrecognized, missing {key} as a key.")
 
             if not isinstance(voice_preset[key], np.ndarray):
-                raise TypeError(f"{key} voice preset must be a {str(self.preset_shape[key])}D ndarray.")
+                raise ValueError(f"{key} voice preset must be a {str(self.preset_shape[key])}D ndarray.")
 
             if len(voice_preset[key].shape) != self.preset_shape[key]:
                 raise ValueError(f"{key} voice preset must be a {str(self.preset_shape[key])}D ndarray.")
@@ -291,6 +284,3 @@ class BarkProcessor(ProcessorMixin):
             encoded_text["history_prompt"] = voice_preset
 
         return encoded_text
-
-
-__all__ = ["BarkProcessor"]

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""LayoutLMv2 model configuration"""
+""" LayoutLMv2 model configuration"""
 
 from ...configuration_utils import PretrainedConfig
 from ...utils import is_detectron2_available, logging
@@ -20,6 +20,11 @@ from ...utils import is_detectron2_available, logging
 
 logger = logging.get_logger(__name__)
 
+LAYOUTLMV2_PRETRAINED_CONFIG_ARCHIVE_MAP = {
+    "layoutlmv2-base-uncased": "https://huggingface.co/microsoft/layoutlmv2-base-uncased/resolve/main/config.json",
+    "layoutlmv2-large-uncased": "https://huggingface.co/microsoft/layoutlmv2-large-uncased/resolve/main/config.json",
+    # See all LayoutLMv2 models at https://huggingface.co/models?filter=layoutlmv2
+}
 
 # soft dependency
 if is_detectron2_available():
@@ -177,7 +182,7 @@ class LayoutLMv2Config(PretrainedConfig):
         )
 
     @classmethod
-    def get_default_detectron2_config(cls):
+    def get_default_detectron2_config(self):
         return {
             "MODEL.MASK_ON": True,
             "MODEL.PIXEL_STD": [57.375, 57.120, 58.395],
@@ -217,6 +222,3 @@ class LayoutLMv2Config(PretrainedConfig):
             setattr(to_set, attributes[-1], v)
 
         return detectron2_config
-
-
-__all__ = ["LayoutLMv2Config"]

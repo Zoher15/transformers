@@ -22,7 +22,7 @@ import torch
 from torch import nn
 
 from ...configuration_utils import PretrainedConfig
-from ...generation import GenerationConfig, LogitsProcessorList, StoppingCriteriaList
+from ...generation import BeamSearchScorer, GenerationConfig, LogitsProcessorList, StoppingCriteriaList
 from ...modeling_outputs import ModelOutput
 from ...modeling_utils import PreTrainedModel
 from ...utils import add_start_docstrings_to_model_forward, logging, replace_return_docstrings
@@ -232,8 +232,6 @@ class RagPreTrainedModel(PreTrainedModel):
 
     config_class = RagConfig
     base_model_prefix = "rag"
-    _supports_flash_attn_2 = True
-    _supports_sdpa = True
 
     @classmethod
     def from_pretrained(cls, *args, **kwargs):
@@ -790,7 +788,7 @@ class RagSequenceForGeneration(RagPreTrainedModel):
         reduce_loss (`bool`, *optional*):
             Only relevant if `labels` is passed. If `True`, the NLL loss is reduced using the `torch.Tensor.sum`
             operation.
-        kwargs (`Dict[str, any]`, *optional*, defaults to `{}`):
+        kwargs (`Dict[str, any]`, optional, defaults to *{}*):
              Legacy dictionary, which is required so that model can use *generate()* function.
 
         Returns:
@@ -1170,8 +1168,6 @@ class RagTokenForGeneration(RagPreTrainedModel):
         n_docs=None,
         **kwargs,
     ):
-        # Overwritten -- `do_marginalize` is explicitly set in the output
-
         if past_key_values is not None:
             # if past is defined use only last decoder_input_ids
             decoder_input_ids = decoder_input_ids[:, -1:]
@@ -1261,7 +1257,7 @@ class RagTokenForGeneration(RagPreTrainedModel):
         reduce_loss (`bool`, *optional*):
             Only relevant if `labels` is passed. If `True`, the NLL loss is reduced using the `torch.Tensor.sum`
             operation.
-        kwargs (`Dict[str, any]`, *optional*, defaults to `{}`):
+        kwargs (`Dict[str, any]`, optional, defaults to *{}*):
             Legacy dictionary, which is required so that model can use *generate()* function.
 
         Returns:
@@ -1458,9 +1454,6 @@ class RagTokenForGeneration(RagPreTrainedModel):
         generation_config = copy.deepcopy(generation_config)
         model_kwargs = generation_config.update(**kwargs)  # All unused kwargs must be model kwargs
 
-        kwargs_has_attention_mask = model_kwargs.get("attention_mask", None) is not None
-        self._prepare_special_tokens(generation_config, kwargs_has_attention_mask)
-
         # set default parameters
         n_docs = n_docs if n_docs is not None else self.config.n_docs
 
@@ -1538,11 +1531,6 @@ class RagTokenForGeneration(RagPreTrainedModel):
             encoder_input_ids=context_input_ids,
             prefix_allowed_tokens_fn=prefix_allowed_tokens_fn,
             logits_processor=logits_processor,
-            device=input_ids.device,
-        )
-
-        prepared_stopping_criteria = self._get_stopping_criteria(
-            generation_config=generation_config, stopping_criteria=stopping_criteria
         )
 
         if generation_config.num_beams == 1:
@@ -1551,24 +1539,33 @@ class RagTokenForGeneration(RagPreTrainedModel):
                     f"num_return_sequences has to be 1, but is {generation_config.num_return_sequences} when doing"
                     " greedy search."
                 )
-            return self._sample(
+            return self.greedy_search(
                 input_ids,
                 logits_processor=pre_processor,
-                stopping_criteria=prepared_stopping_criteria,
-                generation_config=generation_config,
-                synced_gpus=False,
-                streamer=None,
+                max_length=generation_config.max_length,
+                pad_token_id=generation_config.pad_token_id,
+                eos_token_id=generation_config.eos_token_id,
                 **model_kwargs,
             )
         elif generation_config.num_beams > 1:
             if generation_config.num_return_sequences > generation_config.num_beams:
                 raise ValueError("`num_return_sequences` has to be smaller or equal to `num_beams`.")
-            return self._beam_search(
+            beam_scorer = BeamSearchScorer(
+                batch_size=batch_size,
+                num_beams=generation_config.num_beams,
+                device=self.device,
+                length_penalty=generation_config.length_penalty,
+                do_early_stopping=generation_config.early_stopping,
+                num_beam_hyps_to_keep=generation_config.num_return_sequences,
+                max_length=generation_config.max_length,
+            )
+            return self.beam_search(
                 input_ids,
+                beam_scorer,
                 logits_processor=pre_processor,
-                stopping_criteria=prepared_stopping_criteria,
-                generation_config=generation_config,
-                synced_gpus=False,
+                max_length=generation_config.max_length,
+                pad_token_id=generation_config.pad_token_id,
+                eos_token_id=generation_config.eos_token_id,
                 **model_kwargs,
             )
         else:
@@ -1629,6 +1626,3 @@ class RagTokenForGeneration(RagPreTrainedModel):
         eps_i = epsilon / rag_logprobs.size(-1)
         loss = (1.0 - epsilon) * nll_loss + eps_i * smooth_loss
         return loss
-
-
-__all__ = ["RagModel", "RagPreTrainedModel", "RagSequenceForGeneration", "RagTokenForGeneration"]

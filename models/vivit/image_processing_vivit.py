@@ -13,7 +13,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """Image processor class for Vivit."""
-
 from typing import Dict, List, Optional, Union
 
 import numpy as np
@@ -41,7 +40,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import filter_out_non_signature_kwargs, logging
+from ...utils import logging
 
 
 if is_vision_available():
@@ -262,7 +261,7 @@ class VivitImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         image = to_numpy_array(image)
 
-        if do_rescale and is_scaled_image(image):
+        if is_scaled_image(image) and do_rescale:
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -286,7 +285,6 @@ class VivitImageProcessor(BaseImageProcessor):
         image = to_channel_dimension_format(image, data_format, input_channel_dim=input_data_format)
         return image
 
-    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         videos: ImageInput,
@@ -304,6 +302,7 @@ class VivitImageProcessor(BaseImageProcessor):
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
+        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -402,6 +401,3 @@ class VivitImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": videos}
         return BatchFeature(data=data, tensor_type=return_tensors)
-
-
-__all__ = ["VivitImageProcessor"]

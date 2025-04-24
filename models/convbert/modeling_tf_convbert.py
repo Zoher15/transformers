@@ -12,7 +12,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""TF 2.0 ConvBERT model."""
+""" TF 2.0 ConvBERT model."""
+
 
 from __future__ import annotations
 
@@ -58,6 +59,13 @@ logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "YituTech/conv-bert-base"
 _CONFIG_FOR_DOC = "ConvBertConfig"
+
+TF_CONVBERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "YituTech/conv-bert-base",
+    "YituTech/conv-bert-medium-small",
+    "YituTech/conv-bert-small",
+    # See all ConvBERT models at https://huggingface.co/models?filter=convbert
+]
 
 
 # Copied from transformers.models.albert.modeling_tf_albert.TFAlbertEmbeddings with Albert->ConvBert
@@ -1462,15 +1470,3 @@ class TFConvBertForQuestionAnswering(TFConvBertPreTrainedModel, TFQuestionAnswer
         if getattr(self, "qa_outputs", None) is not None:
             with tf.name_scope(self.qa_outputs.name):
                 self.qa_outputs.build([None, None, self.config.hidden_size])
-
-
-__all__ = [
-    "TFConvBertForMaskedLM",
-    "TFConvBertForMultipleChoice",
-    "TFConvBertForQuestionAnswering",
-    "TFConvBertForSequenceClassification",
-    "TFConvBertForTokenClassification",
-    "TFConvBertLayer",
-    "TFConvBertModel",
-    "TFConvBertPreTrainedModel",
-]

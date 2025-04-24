@@ -1119,14 +1119,3 @@ append_call_sample_docstring(
     FlaxQuestionAnsweringModelOutput,
     _CONFIG_FOR_DOC,
 )
-
-__all__ = [
-    "FlaxAlbertPreTrainedModel",
-    "FlaxAlbertModel",
-    "FlaxAlbertForPreTraining",
-    "FlaxAlbertForMaskedLM",
-    "FlaxAlbertForSequenceClassification",
-    "FlaxAlbertForMultipleChoice",
-    "FlaxAlbertForTokenClassification",
-    "FlaxAlbertForQuestionAnswering",
-]

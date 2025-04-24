@@ -37,7 +37,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, filter_out_non_signature_kwargs, is_vision_available, logging
+from ...utils import TensorType, is_vision_available, logging
 
 
 if is_vision_available():
@@ -209,7 +209,6 @@ class PoolFormerImageProcessor(BaseImageProcessor):
             **kwargs,
         )
 
-    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
@@ -227,6 +226,7 @@ class PoolFormerImageProcessor(BaseImageProcessor):
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
+        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -314,7 +314,7 @@ class PoolFormerImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
 
-        if do_rescale and is_scaled_image(images[0]):
+        if is_scaled_image(images[0]) and do_rescale:
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If the input"
                 " images have pixel values between 0 and 1, set `do_rescale=False` to avoid rescaling them again."
@@ -355,6 +355,3 @@ class PoolFormerImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": images}
         return BatchFeature(data=data, tensor_type=return_tensors)
-
-
-__all__ = ["PoolFormerImageProcessor"]

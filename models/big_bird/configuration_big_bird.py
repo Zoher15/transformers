@@ -12,8 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""BigBird model configuration"""
-
+""" BigBird model configuration"""
 from collections import OrderedDict
 from typing import Mapping
 
@@ -23,6 +22,13 @@ from ...utils import logging
 
 
 logger = logging.get_logger(__name__)
+
+BIG_BIRD_PRETRAINED_CONFIG_ARCHIVE_MAP = {
+    "google/bigbird-roberta-base": "https://huggingface.co/google/bigbird-roberta-base/resolve/main/config.json",
+    "google/bigbird-roberta-large": "https://huggingface.co/google/bigbird-roberta-large/resolve/main/config.json",
+    "google/bigbird-base-trivia-itc": "https://huggingface.co/google/bigbird-base-trivia-itc/resolve/main/config.json",
+    # See all BigBird models at https://huggingface.co/models?filter=big_bird
+}
 
 
 class BigBirdConfig(PretrainedConfig):
@@ -171,6 +177,3 @@ class BigBirdOnnxConfig(OnnxConfig):
                 ("attention_mask", dynamic_axis),
             ]
         )
-
-
-__all__ = ["BigBirdConfig", "BigBirdOnnxConfig"]

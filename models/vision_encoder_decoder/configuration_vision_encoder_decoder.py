@@ -78,7 +78,6 @@ class VisionEncoderDecoderConfig(PretrainedConfig):
     ```"""
 
     model_type = "vision-encoder-decoder"
-    sub_configs = {"encoder": AutoConfig, "decoder": AutoConfig}
     is_composition = True
 
     def __init__(self, **kwargs):
@@ -208,6 +207,3 @@ class VisionEncoderDecoderOnnxConfig(OnnxConfig):
         """
         decoder_config.encoder_hidden_size = encoder_config.hidden_size
         return VisionEncoderDecoderDecoderOnnxConfig(decoder_config, feature)
-
-
-__all__ = ["VisionEncoderDecoderConfig", "VisionEncoderDecoderOnnxConfig"]

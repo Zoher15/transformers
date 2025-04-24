@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PyTorch SpeechT5 model."""
+""" PyTorch SpeechT5 model."""
 
 import math
 from typing import List, Optional, Tuple, Union
@@ -25,7 +25,6 @@ from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, L1Loss
 
 from ...activations import ACT2FN
 from ...integrations.deepspeed import is_deepspeed_zero3_enabled
-from ...integrations.fsdp import is_fsdp_managed_module
 from ...modeling_attn_mask_utils import _prepare_4d_attention_mask, _prepare_4d_causal_attention_mask
 from ...modeling_outputs import (
     BaseModelOutput,
@@ -48,6 +47,14 @@ _HIDDEN_STATES_START_POSITION = 1
 _CONFIG_FOR_DOC = "SpeechT5Config"
 
 
+SPEECHT5_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "microsoft/speecht5_asr",
+    "microsoft/speecht5_tts",
+    "microsoft/speecht5_vc",
+    # See all SpeechT5 models at https://huggingface.co/models?filter=speecht5
+]
+
+
 # Copied from transformers.models.bart.modeling_bart.shift_tokens_right
 def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start_token_id: int):
     """
@@ -65,17 +72,13 @@ def shift_tokens_right(input_ids: torch.Tensor, pad_token_id: int, decoder_start
     return shifted_input_ids
 
 
-def shift_spectrograms_right(
-    input_values: torch.Tensor, reduction_factor: int = 1, attention_mask: Optional[torch.Tensor] = None
-):
+def shift_spectrograms_right(input_values: torch.Tensor, reduction_factor: int = 1):
     """
     Shift input spectrograms one timestep to the right. Also applies the reduction factor to the sequence length.
     """
     # thin out frames for reduction factor
     if reduction_factor > 1:
         input_values = input_values[:, reduction_factor - 1 :: reduction_factor]
-        if attention_mask is not None:
-            attention_mask = attention_mask[:, reduction_factor - 1 :: reduction_factor]
 
     shifted_input_values = input_values.new_zeros(input_values.shape)
     shifted_input_values[:, 1:] = input_values[:, :-1].clone()
@@ -83,7 +86,7 @@ def shift_spectrograms_right(
     # replace possible -100 values in labels by zeros
     shifted_input_values.masked_fill_(shifted_input_values == -100.0, 0.0)
 
-    return shifted_input_values, attention_mask
+    return shifted_input_values
 
 
 # Copied from transformers.models.wav2vec2.modeling_wav2vec2._compute_mask_indices
@@ -373,14 +376,8 @@ class SpeechT5PositionalConvEmbedding(nn.Module):
 
             with deepspeed.zero.GatheredParameters(self.conv.weight, modifier_rank=0):
                 self.conv = weight_norm(self.conv, name="weight", dim=2)
-            if hasattr(self.conv, "parametrizations"):
-                weight_g = self.conv.parametrizations.weight.original0
-                weight_v = self.conv.parametrizations.weight.original1
-            else:
-                weight_g = self.conv.weight_g
-                weight_v = self.conv.weight_v
-            deepspeed.zero.register_external_parameter(self, weight_v)
-            deepspeed.zero.register_external_parameter(self, weight_g)
+            deepspeed.zero.register_external_parameter(self, self.conv.weight_v)
+            deepspeed.zero.register_external_parameter(self, self.conv.weight_g)
         else:
             self.conv = weight_norm(self.conv, name="weight", dim=2)
 
@@ -525,7 +522,7 @@ class SpeechT5SpeechEncoderPrenet(nn.Module):
 
         # model only needs masking vector if mask prob is > 0.0
         if config.mask_time_prob > 0.0 or config.mask_feature_prob > 0.0:
-            self.masked_spec_embed = nn.Parameter(torch.Tensor(config.hidden_size).uniform_())
+            self.masked_spec_embed = nn.Parameter(torch.FloatTensor(config.hidden_size).uniform_())
 
         self.pos_conv_embed = SpeechT5PositionalConvEmbedding(config)
         self.pos_sinusoidal_embed = SpeechT5SinusoidalPositionalEmbedding(
@@ -1319,7 +1316,7 @@ class SpeechT5Encoder(SpeechT5PreTrainedModel):
 
         position_bias = self.embed_positions(hidden_states)
 
-        synced_gpus = is_deepspeed_zero3_enabled() or is_fsdp_managed_module(self)
+        deepspeed_zero3_is_enabled = is_deepspeed_zero3_enabled()
 
         all_hidden_states = () if output_hidden_states else None
         all_self_attentions = () if output_attentions else None
@@ -1342,8 +1339,8 @@ class SpeechT5Encoder(SpeechT5PreTrainedModel):
                 dropout_probability = torch.rand([])
                 skip_the_layer = dropout_probability < self.layerdrop
 
-            if not skip_the_layer or synced_gpus:
-                # under fsdp or deepspeed zero3 all gpus must run in sync
+            if not skip_the_layer or deepspeed_zero3_is_enabled:
+                # under deepspeed zero3 all gpus must run in sync
                 if self.gradient_checkpointing and self.training:
                     layer_outputs = self._gradient_checkpointing_func(
                         encoder_layer.__call__,
@@ -1604,7 +1601,7 @@ class SpeechT5Decoder(SpeechT5PreTrainedModel):
                 encoder_attention_mask, hidden_states.dtype, tgt_len=input_shape[-1]
             )
 
-        synced_gpus = is_deepspeed_zero3_enabled() or is_fsdp_managed_module(self)
+        deepspeed_zero3_is_enabled = is_deepspeed_zero3_enabled()
 
         if self.gradient_checkpointing and self.training:
             if use_cache:
@@ -1637,7 +1634,7 @@ class SpeechT5Decoder(SpeechT5PreTrainedModel):
             if self.training:
                 dropout_probability = torch.rand([])
                 skip_the_layer = dropout_probability < self.layerdrop
-            if skip_the_layer and not synced_gpus:
+            if skip_the_layer and not deepspeed_zero3_is_enabled:
                 continue
 
             past_key_value = past_key_values[idx] if past_key_values is not None else None
@@ -2114,7 +2111,7 @@ class SpeechT5Model(SpeechT5PreTrainedModel):
             return self.encoder.get_input_embeddings()
         if isinstance(self.decoder, SpeechT5DecoderWithTextPrenet):
             return self.decoder.get_input_embeddings()
-        raise NotImplementedError
+        return None
 
     def set_input_embeddings(self, value):
         if isinstance(self.encoder, SpeechT5EncoderWithTextPrenet):
@@ -2339,7 +2336,7 @@ class SpeechT5ForSpeechToText(SpeechT5PreTrainedModel):
         >>> from datasets import load_dataset
 
         >>> dataset = load_dataset(
-        ...     "hf-internal-testing/librispeech_asr_demo", "clean", split="validation", trust_remote_code=True
+        ...     "hf-internal-testing/librispeech_asr_demo", "clean", split="validation"
         ... )  # doctest: +IGNORE_RESULT
         >>> dataset = dataset.sort("id")
         >>> sampling_rate = dataset.features["audio"].sampling_rate
@@ -2425,8 +2422,6 @@ class SpeechT5ForSpeechToText(SpeechT5PreTrainedModel):
         encoder_outputs=None,
         **kwargs,
     ):
-        # Note that this model doesn't inherit from the generation mixin, has unique generate function
-
         # cut decoder_input_ids if past is used
         if past_key_values is not None:
             past_length = past_key_values[0][0].shape[2]
@@ -2631,13 +2626,6 @@ class SpeechT5ForTextToSpeech(SpeechT5PreTrainedModel):
         # Initialize weights and apply final processing
         self.post_init()
 
-    @classmethod
-    def can_generate(cls) -> bool:
-        # Speecht5 has a unique model structure, where the external class (`SpeechT5ForTextToSpeech`) doesn't need to inherit from
-        # `GenerationMixin` (it has a non-standard generation method). This means that the base `can_generate()` will return `False`,
-        # but we need to override it so as to do `GenerationConfig` handling in multiple parts of the codebase.
-        return True
-
     def get_encoder(self):
         return self.speecht5.get_encoder()
 
@@ -2704,7 +2692,7 @@ class SpeechT5ForTextToSpeech(SpeechT5PreTrainedModel):
         >>> set_seed(555)  # make deterministic
 
         >>> # generate speech
-        >>> speech = model.generate(inputs["input_ids"], speaker_embeddings=speaker_embeddings, vocoder=vocoder)
+        >>> speech = model.generate(inputs["input_ids"], speaker_embeddings, vocoder=vocoder)
         >>> speech.shape
         torch.Size([15872])
         ```
@@ -2713,9 +2701,7 @@ class SpeechT5ForTextToSpeech(SpeechT5PreTrainedModel):
 
         if labels is not None:
             if decoder_input_values is None:
-                decoder_input_values, decoder_attention_mask = shift_spectrograms_right(
-                    labels, self.config.reduction_factor, decoder_attention_mask
-                )
+                decoder_input_values = shift_spectrograms_right(labels, self.config.reduction_factor)
             if self.config.use_guided_attention_loss:
                 output_attentions = True
 
@@ -3034,7 +3020,7 @@ class SpeechT5ForSpeechToSpeech(SpeechT5PreTrainedModel):
         >>> import torch
 
         >>> dataset = load_dataset(
-        ...     "hf-internal-testing/librispeech_asr_demo", "clean", split="validation", trust_remote_code=True
+        ...     "hf-internal-testing/librispeech_asr_demo", "clean", split="validation"
         ... )  # doctest: +IGNORE_RESULT
         >>> dataset = dataset.sort("id")
         >>> sampling_rate = dataset.features["audio"].sampling_rate
@@ -3060,9 +3046,7 @@ class SpeechT5ForSpeechToSpeech(SpeechT5PreTrainedModel):
 
         if labels is not None:
             if decoder_input_values is None:
-                decoder_input_values, decoder_attention_mask = shift_spectrograms_right(
-                    labels, self.config.reduction_factor, decoder_attention_mask
-                )
+                decoder_input_values = shift_spectrograms_right(labels, self.config.reduction_factor)
 
         outputs = self.speecht5(
             input_values=input_values,
@@ -3244,14 +3228,10 @@ class HifiGanResidualBlock(nn.Module):
         return (kernel_size * dilation - dilation) // 2
 
     def apply_weight_norm(self):
-        weight_norm = nn.utils.weight_norm
-        if hasattr(nn.utils.parametrizations, "weight_norm"):
-            weight_norm = nn.utils.parametrizations.weight_norm
-
         for layer in self.convs1:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
         for layer in self.convs2:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
 
     def remove_weight_norm(self):
         for layer in self.convs1:
@@ -3324,16 +3304,12 @@ class SpeechT5HifiGan(PreTrainedModel):
                 module.bias.data.zero_()
 
     def apply_weight_norm(self):
-        weight_norm = nn.utils.weight_norm
-        if hasattr(nn.utils.parametrizations, "weight_norm"):
-            weight_norm = nn.utils.parametrizations.weight_norm
-
-        weight_norm(self.conv_pre)
+        nn.utils.weight_norm(self.conv_pre)
         for layer in self.upsampler:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
         for layer in self.resblocks:
             layer.apply_weight_norm()
-        weight_norm(self.conv_post)
+        nn.utils.weight_norm(self.conv_post)
 
     def remove_weight_norm(self):
         nn.utils.remove_weight_norm(self.conv_pre)
@@ -3389,13 +3365,3 @@ class SpeechT5HifiGan(PreTrainedModel):
             waveform = hidden_states.squeeze(1)
 
         return waveform
-
-
-__all__ = [
-    "SpeechT5ForSpeechToText",
-    "SpeechT5ForSpeechToSpeech",
-    "SpeechT5ForTextToSpeech",
-    "SpeechT5Model",
-    "SpeechT5PreTrainedModel",
-    "SpeechT5HifiGan",
-]

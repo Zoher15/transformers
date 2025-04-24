@@ -31,7 +31,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, filter_out_non_signature_kwargs, is_vision_available, logging
+from ...utils import TensorType, is_vision_available, logging
 
 
 if is_vision_available():
@@ -173,7 +173,6 @@ class ImageGPTImageProcessor(BaseImageProcessor):
         image = image - 1
         return image
 
-    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         images: ImageInput,
@@ -186,6 +185,7 @@ class ImageGPTImageProcessor(BaseImageProcessor):
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: Optional[Union[str, ChannelDimension]] = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
+        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -258,7 +258,7 @@ class ImageGPTImageProcessor(BaseImageProcessor):
         # All transformations expect numpy arrays.
         images = [to_numpy_array(image) for image in images]
 
-        if do_normalize and is_scaled_image(images[0]):
+        if is_scaled_image(images[0]) and do_normalize:
             logger.warning_once(
                 "It looks like you are trying to rescale already rescaled images. If you wish to do this, "
                 "make sure to set `do_normalize` to `False` and that pixel values are between [-1, 1].",
@@ -297,6 +297,3 @@ class ImageGPTImageProcessor(BaseImageProcessor):
 
         data = {"input_ids": images}
         return BatchFeature(data=data, tensor_type=return_tensors)
-
-
-__all__ = ["ImageGPTImageProcessor"]

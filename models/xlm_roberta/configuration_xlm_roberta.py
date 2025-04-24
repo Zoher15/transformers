@@ -13,8 +13,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""XLM-RoBERTa configuration"""
-
+""" XLM-RoBERTa configuration"""
 from collections import OrderedDict
 from typing import Mapping
 
@@ -24,6 +23,23 @@ from ...utils import logging
 
 
 logger = logging.get_logger(__name__)
+
+XLM_ROBERTA_PRETRAINED_CONFIG_ARCHIVE_MAP = {
+    "FacebookAI/xlm-roberta-base": "https://huggingface.co/FacebookAI/xlm-roberta-base/resolve/main/config.json",
+    "FacebookAI/xlm-roberta-large": "https://huggingface.co/FacebookAI/xlm-roberta-large/resolve/main/config.json",
+    "FacebookAI/xlm-roberta-large-finetuned-conll02-dutch": (
+        "https://huggingface.co/FacebookAI/xlm-roberta-large-finetuned-conll02-dutch/resolve/main/config.json"
+    ),
+    "FacebookAI/xlm-roberta-large-finetuned-conll02-spanish": (
+        "https://huggingface.co/FacebookAI/xlm-roberta-large-finetuned-conll02-spanish/resolve/main/config.json"
+    ),
+    "FacebookAI/xlm-roberta-large-finetuned-conll03-english": (
+        "https://huggingface.co/FacebookAI/xlm-roberta-large-finetuned-conll03-english/resolve/main/config.json"
+    ),
+    "FacebookAI/xlm-roberta-large-finetuned-conll03-german": (
+        "https://huggingface.co/FacebookAI/xlm-roberta-large-finetuned-conll03-german/resolve/main/config.json"
+    ),
+}
 
 
 class XLMRobertaConfig(PretrainedConfig):
@@ -152,6 +168,3 @@ class XLMRobertaOnnxConfig(OnnxConfig):
                 ("attention_mask", dynamic_axis),
             ]
         )
-
-
-__all__ = ["XLMRobertaConfig", "XLMRobertaOnnxConfig"]

@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PyTorch FastSpeech2Conformer model."""
+""" PyTorch FastSpeech2Conformer model."""
 
 import math
 from dataclasses import dataclass
@@ -32,6 +32,11 @@ from .configuration_fastspeech2_conformer import (
 
 
 logger = logging.get_logger(__name__)
+
+FASTSPEECH2_CONFORMER_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "espnet/fastspeech2_conformer",
+    # See all FastSpeech2Conformer models at https://huggingface.co/models?filter=fastspeech2_conformer
+]
 
 
 @dataclass
@@ -1416,14 +1421,10 @@ class HifiGanResidualBlock(nn.Module):
         return (kernel_size * dilation - dilation) // 2
 
     def apply_weight_norm(self):
-        weight_norm = nn.utils.weight_norm
-        if hasattr(nn.utils.parametrizations, "weight_norm"):
-            weight_norm = nn.utils.parametrizations.weight_norm
-
         for layer in self.convs1:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
         for layer in self.convs2:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
 
     def remove_weight_norm(self):
         for layer in self.convs1:
@@ -1497,16 +1498,12 @@ class FastSpeech2ConformerHifiGan(PreTrainedModel):
                 module.bias.data.zero_()
 
     def apply_weight_norm(self):
-        weight_norm = nn.utils.weight_norm
-        if hasattr(nn.utils.parametrizations, "weight_norm"):
-            weight_norm = nn.utils.parametrizations.weight_norm
-
-        weight_norm(self.conv_pre)
+        nn.utils.weight_norm(self.conv_pre)
         for layer in self.upsampler:
-            weight_norm(layer)
+            nn.utils.weight_norm(layer)
         for layer in self.resblocks:
             layer.apply_weight_norm()
-        weight_norm(self.conv_post)
+        nn.utils.weight_norm(self.conv_post)
 
     def remove_weight_norm(self):
         nn.utils.remove_weight_norm(self.conv_pre)
@@ -1687,11 +1684,3 @@ class FastSpeech2ConformerWithHifiGan(PreTrainedModel):
             return model_outputs + (waveform,)
 
         return FastSpeech2ConformerWithHifiGanOutput(waveform=waveform, **model_outputs)
-
-
-__all__ = [
-    "FastSpeech2ConformerWithHifiGan",
-    "FastSpeech2ConformerHifiGan",
-    "FastSpeech2ConformerModel",
-    "FastSpeech2ConformerPreTrainedModel",
-]

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Union
 
 from ..utils import is_torch_available
 from ..utils.quantization_config import QuantizationConfigMixin
@@ -99,49 +99,6 @@ class HfQuantizer(ABC):
         """
         return torch_dtype
 
-    def update_missing_keys(self, model, missing_keys: List[str], prefix: str) -> List[str]:
-        """
-        Override this method if you want to adjust the `missing_keys`.
-
-        Args:
-            missing_keys (`List[str]`, *optional*):
-                The list of missing keys in the checkpoint compared to the state dict of the model
-        """
-        return missing_keys
-
-    def update_unexpected_keys(self, model, unexpected_keys: List[str], prefix: str) -> List[str]:
-        """
-        Override this method if you want to adjust the `unexpected_keys`.
-
-        Args:
-            unexpected_keys (`List[str]`, *optional*):
-                The list of unexpected keys in the checkpoint compared to the state dict of the model
-        """
-        return unexpected_keys
-
-    def update_missing_keys_after_loading(self, model, missing_keys: List[str], prefix: str) -> List[str]:
-        """
-        Override this method if you want to adjust the `missing_keys` after loading the model params,
-        but before the model is post-processed.
-
-        Args:
-            missing_keys (`List[str]`, *optional*):
-                The list of missing keys in the checkpoint compared to the state dict of the model
-        """
-        return missing_keys
-
-    def update_expected_keys(self, model, expected_keys: List[str], loaded_keys: List[str]) -> List[str]:
-        """
-        Override this method if you want to adjust the `update_expected_keys`.
-
-        Args:
-            expected_keys (`List[str]`, *optional*):
-                The list of the expected keys in the initialized model.
-            loaded_keys (`List[str]`, *optional*):
-                The list of the loaded keys in the checkpoint.
-        """
-        return expected_keys
-
     def get_special_dtypes_update(self, model, torch_dtype: "torch.dtype") -> Dict[str, "torch.dtype"]:
         """
         returns dtypes for modules that are not quantized - used for the computation of the device_map in case
@@ -154,7 +111,6 @@ class HfQuantizer(ABC):
             torch_dtype (`torch.dtype`):
                 The dtype passed in `from_pretrained` method.
         """
-
         return {
             name: torch_dtype
             for name, _ in model.named_parameters()
@@ -166,12 +122,7 @@ class HfQuantizer(ABC):
         return max_memory
 
     def check_quantized_param(
-        self,
-        model: "PreTrainedModel",
-        param_value: "torch.Tensor",
-        param_name: str,
-        state_dict: Dict[str, Any],
-        **kwargs,
+        self, model: "PreTrainedModel", param_value: "torch.Tensor", param_name: str, state_dict: Dict[str, Any]
     ) -> bool:
         """
         checks if a loaded state_dict component is part of quantized param + some validation; only defined if
@@ -227,64 +178,20 @@ class HfQuantizer(ABC):
         """
         return self._process_model_after_weight_loading(model, **kwargs)
 
-    def dequantize(self, model):
-        """
-        Potentially dequantize the model to retrive the original model, with some loss in accuracy / performance.
-        Note not all quantization schemes support this.
-        """
-        model = self._dequantize(model)
-
-        # Delete quantizer and quantization config
-        del model.hf_quantizer
-        del model.config.quantization_config
-        del model.config._pre_quantization_dtype
-        model.is_quantized = False
-
-        return model
-
-    def _dequantize(self, model):
-        raise NotImplementedError(
-            f"{self.quantization_config.quant_method} has no implementation of `dequantize`, please raise an issue on GitHub."
-        )
-
-    @staticmethod
-    def get_modules_to_not_convert(
-        model: "PreTrainedModel",
-        skip_modules: Optional[List[str]] = None,
-        keep_in_fp32_modules: Optional[List[str]] = None,
-    ):
-        from ..integrations import get_keys_to_not_convert
-
-        modules_to_not_convert = []
-        if skip_modules is None:
-            modules_to_not_convert = get_keys_to_not_convert(model)
-        else:
-            modules_to_not_convert = skip_modules
-
-        if keep_in_fp32_modules is not None:
-            modules_to_not_convert.extend(keep_in_fp32_modules)
-
-        return modules_to_not_convert
-
-    @property
-    def is_qat_trainable(self) -> bool:
-        """Flag indicating whether the quantized model can carry out quantization aware training"""
-        return False
-
-    @property
-    def is_compileable(self) -> bool:
-        """Flag indicating whether the quantized model can be compiled"""
-        return False
+    @abstractmethod
+    def _process_model_before_weight_loading(self, model, **kwargs):
+        ...
 
     @abstractmethod
-    def _process_model_before_weight_loading(self, model, **kwargs): ...
-
-    @abstractmethod
-    def _process_model_after_weight_loading(self, model, **kwargs): ...
-
-    @abstractmethod
-    def is_serializable(self, safe_serialization=None): ...
+    def _process_model_after_weight_loading(self, model, **kwargs):
+        ...
 
     @property
     @abstractmethod
-    def is_trainable(self): ...
+    def is_serializable(self):
+        ...
+
+    @property
+    @abstractmethod
+    def is_trainable(self):
+        ...

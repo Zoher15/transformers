@@ -78,8 +78,6 @@ ACT2FN = {
     "swish": nn.swish,
     "gelu_new": partial(nn.gelu, approximate=True),
     "quick_gelu": quick_gelu,
-    "gelu_pytorch_tanh": partial(nn.gelu, approximate=True),
-    "tanh": nn.tanh,
 }
 
 
@@ -91,7 +89,7 @@ def dtype_byte_size(dtype):
     4
     ```
     """
-    if dtype is bool:
+    if dtype == bool:
         return 1 / 8
     bit_search = re.search(r"[^\d](\d+)$", dtype.name)
     if bit_search is None:
@@ -368,7 +366,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
 
     def to_fp32(self, params: Union[Dict, FrozenDict], mask: Any = None):
         r"""
-        Cast the floating-point `params` to `jax.numpy.float32`. This method can be used to explicitly convert the
+        Cast the floating-point `parmas` to `jax.numpy.float32`. This method can be used to explicitly convert the
         model parameters to fp32 precision. This returns a new `params` tree and does not cast the `params` in place.
 
         Arguments:
@@ -395,7 +393,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
 
     def to_fp16(self, params: Union[Dict, FrozenDict], mask: Any = None):
         r"""
-        Cast the floating-point `params` to `jax.numpy.float16`. This returns a new `params` tree and does not cast the
+        Cast the floating-point `parmas` to `jax.numpy.float16`. This returns a new `params` tree and does not cast the
         `params` in place.
 
         This method can be used on GPU to explicitly convert the model parameters to float16 precision to do full
@@ -511,7 +509,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
             `bool`: Whether this model can generate sequences with `.generate()`.
         """
         # Detects whether `prepare_inputs_for_generation` has been overwritten, which is a requirement for generation.
-        # Alternatively, the model can also have a custom `generate` function.
+        # Alternativelly, the model can also have a custom `generate` function.
         if "GenerationMixin" in str(cls.prepare_inputs_for_generation) and "GenerationMixin" in str(cls.generate):
             return False
         return True
@@ -592,9 +590,9 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
             force_download (`bool`, *optional*, defaults to `False`):
                 Whether or not to force the (re-)download of the model weights and configuration files, overriding the
                 cached versions if they exist.
-            resume_download:
-                Deprecated and ignored. All downloads are now resumed by default when possible.
-                Will be removed in v5 of Transformers.
+            resume_download (`bool`, *optional*, defaults to `False`):
+                Whether or not to delete incompletely received files. Will attempt to resume the download if such a
+                file exists.
             proxies (`Dict[str, str]`, *optional*):
                 A dictionary of proxy servers to use by protocol or endpoint, e.g., `{'http': 'foo.bar:3128',
                 'http://hostname': 'foo.bar:4012'}`. The proxies are used on each request.
@@ -611,7 +609,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
 
                 <Tip>
 
-                To test a pull request you made on the Hub, you can pass `revision="refs/pr/<pr_number>"`.
+                To test a pull request you made on the Hub, you can pass `revision="refs/pr/<pr_number>".
 
                 </Tip>
 
@@ -646,7 +644,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
         >>> model = FlaxBertModel.from_pretrained("./pt_model/pytorch_model.bin", from_pt=True, config=config)
         ```"""
         from_pt = kwargs.pop("from_pt", False)
-        resume_download = kwargs.pop("resume_download", None)
+        resume_download = kwargs.pop("resume_download", False)
         proxies = kwargs.pop("proxies", None)
         use_auth_token = kwargs.pop("use_auth_token", None)
         trust_remote_code = kwargs.pop("trust_remote_code", None)
@@ -824,8 +822,6 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
                             "revision": revision,
                             "proxies": proxies,
                             "token": token,
-                            "cache_dir": cache_dir,
-                            "local_files_only": local_files_only,
                         }
                         if has_file(pretrained_model_name_or_path, SAFE_WEIGHTS_INDEX_NAME, **has_file_kwargs):
                             is_sharded = True
@@ -969,7 +965,7 @@ class FlaxPreTrainedModel(PushToHubMixin, FlaxGenerationMixin):
             )
             cls._missing_keys = missing_keys
 
-        # Mismatched keys contains tuples key/shape1/shape2 of weights in the checkpoint that have a shape not
+        # Mistmatched keys contains tuples key/shape1/shape2 of weights in the checkpoint that have a shape not
         # matching the weights in the model.
         mismatched_keys = []
         for key in state.keys():

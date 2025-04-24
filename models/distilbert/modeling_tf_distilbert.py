@@ -13,8 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """
-TF 2.0 DistilBERT model
+ TF 2.0 DistilBERT model
 """
+
 
 from __future__ import annotations
 
@@ -60,6 +61,16 @@ logger = logging.get_logger(__name__)
 
 _CHECKPOINT_FOR_DOC = "distilbert-base-uncased"
 _CONFIG_FOR_DOC = "DistilBertConfig"
+
+TF_DISTILBERT_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "distilbert-base-uncased",
+    "distilbert-base-uncased-distilled-squad",
+    "distilbert-base-cased",
+    "distilbert-base-cased-distilled-squad",
+    "distilbert-base-multilingual-cased",
+    "distilbert-base-uncased-finetuned-sst-2-english",
+    # See all DistilBERT models at https://huggingface.co/models?filter=distilbert
+]
 
 
 class TFEmbeddings(keras.layers.Layer):
@@ -1133,15 +1144,3 @@ class TFDistilBertForQuestionAnswering(TFDistilBertPreTrainedModel, TFQuestionAn
         if getattr(self, "qa_outputs", None) is not None:
             with tf.name_scope(self.qa_outputs.name):
                 self.qa_outputs.build([None, None, self.config.dim])
-
-
-__all__ = [
-    "TFDistilBertForMaskedLM",
-    "TFDistilBertForMultipleChoice",
-    "TFDistilBertForQuestionAnswering",
-    "TFDistilBertForSequenceClassification",
-    "TFDistilBertForTokenClassification",
-    "TFDistilBertMainLayer",
-    "TFDistilBertModel",
-    "TFDistilBertPreTrainedModel",
-]

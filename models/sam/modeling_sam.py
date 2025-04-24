@@ -12,9 +12,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""PyTorch SAM model."""
+""" PyTorch SAM model."""
 
 import collections
+import math
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -35,6 +36,13 @@ logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "SamConfig"
 _CHECKPOINT_FOR_DOC = "facebook/sam-vit-huge"
+
+SAM_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "facebook/sam-vit-huge",
+    "facebook/sam-vit-large",
+    "facebook/sam-vit-base",
+    # See all SAM models at https://huggingface.co/models?filter=sam
+]
 
 
 @dataclass
@@ -231,7 +239,7 @@ class SamAttention(nn.Module):
         # SamAttention
         _, _, _, c_per_head = query.shape
         attn = query @ key.permute(0, 1, 3, 2)  # batch_size * point_batch_size  x N_heads x N_tokens x N_tokens
-        attn = attn / (c_per_head**0.5)
+        attn = attn / math.sqrt(c_per_head)
         attn = torch.softmax(attn, dim=-1)
 
         if attention_similarity is not None:
@@ -244,47 +252,6 @@ class SamAttention(nn.Module):
         out = self.out_proj(out)
 
         return out
-
-
-class SamSdpaAttention(SamAttention):
-    """
-    SAM's attention layer that allows for downscaling the size of the embedding after projection to queries, keys, and
-    values. Using SDPA instead of the default attention.
-    """
-
-    def __init__(self, config, downsample_rate=None):
-        super().__init__(config, downsample_rate)
-
-    def forward(self, query: Tensor, key: Tensor, value: Tensor, attention_similarity: Tensor = None) -> Tensor:
-        # Input projections
-        query = self.q_proj(query)
-        key = self.k_proj(key)
-        value = self.v_proj(value)
-
-        point_batch_size = query.shape[1]
-        # Separate into heads
-        query = self._separate_heads(query, self.num_attention_heads)
-        key = self._separate_heads(key, self.num_attention_heads)
-        value = self._separate_heads(value, self.num_attention_heads)
-
-        # Scaled dot product attention
-        attn_mask = None
-        if attention_similarity is not None:
-            attn_mask = attention_similarity.unsqueeze(1).expand(-1, self.num_attention_heads, -1, -1)
-
-        out = F.scaled_dot_product_attention(query, key, value, attn_mask=attn_mask)
-
-        # Get output
-        out = self._recombine_heads(out, point_batch_size)
-        out = self.out_proj(out)
-
-        return out
-
-
-SAM_ATTENTION_CLASSES = {
-    "eager": SamAttention,
-    "sdpa": SamSdpaAttention,
-}
 
 
 class SamTwoWayAttentionBlock(nn.Module):
@@ -307,21 +274,18 @@ class SamTwoWayAttentionBlock(nn.Module):
         self.hidden_size = config.hidden_size
         self.layer_norm_eps = config.layer_norm_eps
 
-        self.self_attn = SAM_ATTENTION_CLASSES[config._attn_implementation](config, downsample_rate=1)
+        self.self_attn = SamAttention(config, downsample_rate=1)
         self.layer_norm1 = nn.LayerNorm(self.hidden_size, eps=self.layer_norm_eps)
 
-        self.cross_attn_token_to_image = SAM_ATTENTION_CLASSES[config._attn_implementation](
-            config, downsample_rate=attention_downsample_rate
-        )
+        self.cross_attn_token_to_image = SamAttention(config, downsample_rate=attention_downsample_rate)
         self.layer_norm2 = nn.LayerNorm(self.hidden_size, eps=self.layer_norm_eps)
 
         self.mlp = SamMLPBlock(config)
         self.layer_norm3 = nn.LayerNorm(self.hidden_size, eps=self.layer_norm_eps)
 
         self.layer_norm4 = nn.LayerNorm(self.hidden_size, eps=self.layer_norm_eps)
-        self.cross_attn_image_to_token = SAM_ATTENTION_CLASSES[config._attn_implementation](
-            config, downsample_rate=attention_downsample_rate
-        )
+        self.cross_attn_image_to_token = SamAttention(config, downsample_rate=attention_downsample_rate)
+
         self.skip_first_layer_pe = skip_first_layer_pe
 
     def forward(
@@ -388,7 +352,7 @@ class SamTwoWayTransformer(nn.Module):
         for i in range(self.num_hidden_layers):
             self.layers.append(SamTwoWayAttentionBlock(config, skip_first_layer_pe=(i == 0)))
 
-        self.final_attn_token_to_image = SAM_ATTENTION_CLASSES[config._attn_implementation](config)
+        self.final_attn_token_to_image = SamAttention(config)
         self.layer_norm_final_attn = nn.LayerNorm(config.hidden_size)
 
     def forward(
@@ -475,7 +439,7 @@ class SamFeedForward(nn.Module):
 class SamMaskDecoder(nn.Module):
     def __init__(self, config: SamMaskDecoderConfig):
         super().__init__()
-        self.config = config
+
         self.hidden_size = config.hidden_size
 
         self.num_multimask_outputs = config.num_multimask_outputs
@@ -820,8 +784,9 @@ class SamVisionAttention(nn.Module):
 
         return rel_pos_resized[relative_coords.long()]
 
-    def get_decomposed_rel_pos(
+    def add_decomposed_rel_pos(
         self,
+        attn: torch.Tensor,
         query: torch.Tensor,
         rel_pos_h: torch.Tensor,
         rel_pos_w: torch.Tensor,
@@ -833,6 +798,8 @@ class SamVisionAttention(nn.Module):
         https://github.com/facebookresearch/mvit/blob/19786631e330df9f3622e5402b4a419a263a2c80/mvit/models/attention.py
 
         Args:
+            attn (`torch.Tensor`):
+                attention map.
             query (`torch.Tensor`):
                 query q in the attention layer with shape (batch_size, query_height * query_width, channel).
             rel_pos_h (`torch.Tensor`):
@@ -845,8 +812,8 @@ class SamVisionAttention(nn.Module):
                 spatial sequence size of key k with (key_height, key_width).
 
         Returns:
-            decomposed_rel_pos (`torch.Tensor`):
-                decomposed relative position embeddings.
+            attn (`torch.Tensor`):
+                attention map with added relative positional embeddings.
         """
         query_height, query_width = q_size
         key_height, key_width = k_size
@@ -857,10 +824,10 @@ class SamVisionAttention(nn.Module):
         reshaped_query = query.reshape(batch_size, query_height, query_width, dim)
         rel_h = torch.einsum("bhwc,hkc->bhwk", reshaped_query, relative_position_height)
         rel_w = torch.einsum("bhwc,wkc->bhwk", reshaped_query, relative_position_width)
-
-        decomposed_rel_pos = rel_h[:, :, :, :, None] + rel_w[:, :, :, None, :]
-
-        return decomposed_rel_pos
+        attn = attn.reshape(batch_size, query_height, query_width, key_height, key_width)
+        attn = attn + rel_h[:, :, :, :, None] + rel_w[:, :, :, None, :]
+        attn = attn.reshape(batch_size, query_height * query_width, key_height * key_width)
+        return attn
 
     def forward(self, hidden_states: torch.Tensor, output_attentions=False) -> torch.Tensor:
         batch_size, height, width, _ = hidden_states.shape
@@ -876,11 +843,9 @@ class SamVisionAttention(nn.Module):
         attn_weights = (query * self.scale) @ key.transpose(-2, -1)
 
         if self.use_rel_pos:
-            decomposed_rel_pos = self.get_decomposed_rel_pos(
-                query, self.rel_pos_h, self.rel_pos_w, (height, width), (height, width)
+            attn_weights = self.add_decomposed_rel_pos(
+                attn_weights, query, self.rel_pos_h, self.rel_pos_w, (height, width), (height, width)
             )
-            decomposed_rel_pos = decomposed_rel_pos.reshape_as(attn_weights)
-            attn_weights = attn_weights + decomposed_rel_pos
 
         attn_weights = torch.nn.functional.softmax(attn_weights, dtype=torch.float32, dim=-1).to(query.dtype)
 
@@ -899,76 +864,11 @@ class SamVisionAttention(nn.Module):
         return outputs
 
 
-class SamVisionSdpaAttention(SamVisionAttention):
-    """
-    Multi-head Attention block with relative position embeddings.
-    Using SDPA instead of the default attention.
-    """
-
-    def __init__(self, config, window_size):
-        super().__init__(config, window_size)
-
-    def forward(self, hidden_states: torch.Tensor, output_attentions=False) -> torch.Tensor:
-        if output_attentions:
-            logger.warning_once(
-                "`SamVisionSdpaAttention` is used but `torch.nn.functional.scaled_dot_product_attention` does not support "
-                "`output_attentions=True`. Falling back to the manual attention implementation, but "
-                "specifying the manual implementation will be required from Transformers version v5.0.0 onwards. "
-                'This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
-            )
-            return super().forward(
-                hidden_states=hidden_states,
-                output_attentions=output_attentions,
-            )
-
-        batch_size, height, width, _ = hidden_states.shape
-        # qkv with shape (3, B, nHead, H * W, C)
-        qkv = (
-            self.qkv(hidden_states)
-            .reshape(batch_size, height * width, 3, self.num_attention_heads, -1)
-            .permute(2, 0, 3, 1, 4)
-        )
-        # q, k, v with shape (B * nHead, H * W, C)
-        query, key, value = qkv.reshape(3, batch_size * self.num_attention_heads, height * width, -1).unbind(0)
-
-        attn_bias = None
-        if self.use_rel_pos:
-            decomposed_rel_pos = self.get_decomposed_rel_pos(
-                query, self.rel_pos_h, self.rel_pos_w, (height, width), (height, width)
-            )
-            decomposed_rel_pos = decomposed_rel_pos.reshape(
-                batch_size, self.num_attention_heads, height * width, height * width
-            )
-            attn_bias = decomposed_rel_pos
-
-        query = query.view(batch_size, self.num_attention_heads, height * width, -1)
-        key = key.view(batch_size, self.num_attention_heads, height * width, -1)
-        value = value.view(batch_size, self.num_attention_heads, height * width, -1)
-
-        attn_output = torch.nn.functional.scaled_dot_product_attention(query, key, value, attn_mask=attn_bias)
-
-        attn_output = (
-            attn_output.view(batch_size, self.num_attention_heads, height, width, -1)
-            .permute(0, 2, 3, 1, 4)
-            .reshape(batch_size, height, width, -1)
-        )
-
-        attn_output = self.proj(attn_output)
-
-        return attn_output, None
-
-
-SAM_VISION_ATTENTION_CLASSES = {
-    "eager": SamVisionAttention,
-    "sdpa": SamVisionSdpaAttention,
-}
-
-
 class SamVisionLayer(nn.Module):
     def __init__(self, config, window_size):
         super().__init__()
         self.layer_norm1 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
-        self.attn = SAM_VISION_ATTENTION_CLASSES[config._attn_implementation](config, window_size)
+        self.attn = SamVisionAttention(config, window_size)
         self.layer_norm2 = nn.LayerNorm(config.hidden_size, eps=config.layer_norm_eps)
         self.mlp = SamMLPBlock(config)
         self.window_size = window_size
@@ -1178,9 +1078,6 @@ class SamPreTrainedModel(PreTrainedModel):
     config_class = SamConfig
     base_model_prefix = "sam"
     main_input_name = "pixel_values"
-    _no_split_modules = ["SamVisionAttention"]
-    supports_gradient_checkpointing = True
-    _supports_sdpa = True
 
     def _init_weights(self, module):
         std = self.config.initializer_range
@@ -1520,6 +1417,3 @@ class SamModel(SamPreTrainedModel):
             vision_attentions=vision_attentions,
             mask_decoder_attentions=mask_decoder_attentions,
         )
-
-
-__all__ = ["SamModel", "SamPreTrainedModel"]

@@ -43,6 +43,12 @@ logger = logging.get_logger(__name__)
 _CONFIG_FOR_DOC = "LukeConfig"
 _CHECKPOINT_FOR_DOC = "studio-ousia/luke-base"
 
+LUKE_PRETRAINED_MODEL_ARCHIVE_LIST = [
+    "studio-ousia/luke-base",
+    "studio-ousia/luke-large",
+    # See all LUKE models at https://huggingface.co/models?filter=luke
+]
+
 
 @dataclass
 class BaseLukeModelOutputWithPooling(BaseModelOutputWithPooling):
@@ -501,7 +507,7 @@ class LukeSelfAttention(nn.Module):
         super().__init__()
         if config.hidden_size % config.num_attention_heads != 0 and not hasattr(config, "embedding_size"):
             raise ValueError(
-                f"The hidden size {config.hidden_size} is not a multiple of the number of attention "
+                f"The hidden size {config.hidden_size,} is not a multiple of the number of attention "
                 f"heads {config.num_attention_heads}."
             )
 
@@ -2226,17 +2232,3 @@ class LukeForMultipleChoice(LukePreTrainedModel):
             entity_hidden_states=outputs.entity_hidden_states,
             attentions=outputs.attentions,
         )
-
-
-__all__ = [
-    "LukeForEntityClassification",
-    "LukeForEntityPairClassification",
-    "LukeForEntitySpanClassification",
-    "LukeForMultipleChoice",
-    "LukeForQuestionAnswering",
-    "LukeForSequenceClassification",
-    "LukeForTokenClassification",
-    "LukeForMaskedLM",
-    "LukeModel",
-    "LukePreTrainedModel",
-]

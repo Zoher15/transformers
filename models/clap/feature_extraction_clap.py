@@ -14,6 +14,7 @@
 # limitations under the License.
 """Feature extractor class for CLAP."""
 
+
 import copy
 from typing import Any, Dict, List, Optional, Union
 
@@ -308,7 +309,7 @@ class ClapFeatureExtractor(SequenceFeatureExtractor):
                 )
         else:
             logger.warning(
-                f"It is strongly recommended to pass the `sampling_rate` argument to `{self.__class__.__name__}()`. "
+                "It is strongly recommended to pass the `sampling_rate` argument to this function. "
                 "Failing to do so can result in silent errors that might be hard to debug."
             )
 
@@ -360,6 +361,3 @@ class ClapFeatureExtractor(SequenceFeatureExtractor):
             input_features = input_features.convert_to_tensors(return_tensors)
 
         return input_features
-
-
-__all__ = ["ClapFeatureExtractor"]

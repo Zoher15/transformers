@@ -38,7 +38,7 @@ from ...image_utils import (
     valid_images,
     validate_preprocess_arguments,
 )
-from ...utils import TensorType, filter_out_non_signature_kwargs, is_vision_available, logging
+from ...utils import TensorType, is_vision_available, logging
 
 
 if is_vision_available():
@@ -336,7 +336,6 @@ class TvpImageProcessor(BaseImageProcessor):
 
         return image
 
-    @filter_out_non_signature_kwargs()
     def preprocess(
         self,
         videos: Union[ImageInput, List[ImageInput], List[List[ImageInput]]],
@@ -358,6 +357,7 @@ class TvpImageProcessor(BaseImageProcessor):
         return_tensors: Optional[Union[str, TensorType]] = None,
         data_format: ChannelDimension = ChannelDimension.FIRST,
         input_data_format: Optional[Union[str, ChannelDimension]] = None,
+        **kwargs,
     ) -> PIL.Image.Image:
         """
         Preprocess an image or batch of images.
@@ -476,6 +476,3 @@ class TvpImageProcessor(BaseImageProcessor):
 
         data = {"pixel_values": videos}
         return BatchFeature(data=data, tensor_type=return_tensors)
-
-
-__all__ = ["TvpImageProcessor"]
