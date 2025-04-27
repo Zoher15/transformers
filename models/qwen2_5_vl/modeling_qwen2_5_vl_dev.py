@@ -390,7 +390,7 @@ class Qwen2_5_VLPreTrainedModel(PreTrainedModel):
                 module.weight.data[module.padding_idx].zero_()
 
 
-class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
+class Qwen2_5_VisionTransformerPretrainedModel_dev(Qwen2_5_VLPreTrainedModel):
     config_class = Qwen2_5_VLVisionConfig
     _no_split_modules = ["Qwen2_5_VLVisionBlock"]
 
@@ -492,13 +492,23 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
 
         return window_index, cu_window_seqlens
 
-    def forward(self, hidden_states: torch.Tensor, grid_thw: torch.Tensor) -> torch.Tensor:
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        grid_thw: torch.Tensor,
+        vision_exit_level: Optional[str] = None, # Can be "low", "medium", "high", or None
+    ) -> torch.Tensor: # Return hidden states
         """
         Args:
-            hidden_states (`torch.Tensor` of shape `(seq_len, hidden_size)`):
-                The final hidden states of the model.
-            grid_thw (`torch.Tensor` of shape `(num_images_or_videos, 3)`):
-                The temporal, height and width of feature shape of each image in LLM.
+            hidden_states (`torch.Tensor`): Input image/video tensor.
+            grid_thw (`torch.Tensor`): Grid dimensions for RoPE calculation.
+            exit_level (`Optional[str]`, defaults to `None`):
+                Controls static early exit based on layer proportion.
+                - "low": Runs approx. the first 1/4 of vision layers.
+                - "medium": Runs approx. the first 2/4 of vision layers.
+                - "high": Runs approx. the first 3/4 of vision layers.
+                - None: Runs all vision layers (default).
 
         Returns:
             `torch.Tensor`: hidden_states.
@@ -533,7 +543,34 @@ class Qwen2_5_VisionTransformerPretrainedModel(Qwen2_5_VLPreTrainedModel):
         )
         cu_seqlens = F.pad(cu_seqlens, (1, 0), value=0)
 
-        for layer_num, blk in enumerate(self.blocks):
+        # --- Start: Early Exit Logic ---
+        num_layers = len(self.blocks)
+        target_exit_layer = num_layers # Default: run all layers
+
+        if vision_exit_level is not None:
+            vision_exit_level = vision_exit_level.lower()
+            if vision_exit_level== "low":
+                # Run approx. 1/4 layers, use ceil to ensure at least that many
+                target_exit_layer = math.ceil(num_layers / 4)
+            elif vision_exit_level == "medium":
+                # Run approx. 1/2 layers, use ceil
+                target_exit_layer = math.ceil(num_layers * 2 / 4)
+            elif vision_exit_level == "high":
+                # Run approx. 3/4 layers, use ceil
+                target_exit_layer = math.ceil(num_layers * 3/ 4)
+            else:
+                logger.warning(f"Invalid exit_level '{vision_exit_level}'. Expected 'low', 'medium', or 'high'. Running all layers.")
+                target_exit_layer = num_layers
+            # Ensure we run at least one layer if requested
+            target_exit_layer = max(1, target_exit_layer)
+            logger.info(f"Static early exit: Running first {target_exit_layer}/{num_layers} vision layers based on level '{vision_exit_level}'.")
+
+        # Iterate only through the blocks up to the target_exit_layer
+        # Use slicing on self.blocks
+        blocks_to_run = self.blocks[:target_exit_layer]
+         # --- End: Early Exit Logic ---
+
+        for layer_num, blk in enumerate(blocks_to_run):
             if layer_num in self.fullatt_block_indexes:
                 cu_seqlens_now = cu_seqlens
             else:
@@ -899,7 +936,7 @@ class Qwen2_5_VLSdpaAttention(Qwen2_5_VLAttention):
         if output_attentions:
             # TODO: Improve this warning with e.g. `model.config.attn_implementation = "manual"` once this is implemented.
             logger.warning_once(
-                "Qwen2_5_VLModel is using Qwen2_5_VLSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
+                "Qwen2_5_VLModel_dev is using Qwen2_5_VLSdpaAttention, but `torch.nn.functional.scaled_dot_product_attention` does not support `output_attentions=True`. Falling back to the manual attention implementation, "
                 'but specifying the manual implementation will be required from Transformers version v5.0.0 onwards. This warning can be removed using the argument `attn_implementation="eager"` when loading the model.'
             )
             return super().forward(
@@ -1063,7 +1100,7 @@ class Qwen2_5_VLDecoderLayer(nn.Module):
     "The bare Qwen2_5_VL Model outputting raw hidden-states without any specific head on top.",
     Qwen2_5_VL_START_DOCSTRING,
 )
-class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
+class Qwen2_5_VLModel_dev(Qwen2_5_VLPreTrainedModel):
     def __init__(self, config: Qwen2_5_VLConfig):
         super().__init__(config)
         self.padding_idx = config.pad_token_id
@@ -1098,6 +1135,7 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         output_attentions: Optional[bool] = None,
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
+        decoder_exit_level: Optional[str] = None, # Can be "low", "medium", "high", or None
         cache_position: Optional[torch.LongTensor] = None,
     ) -> Union[Tuple, BaseModelOutputWithPast]:
         output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
@@ -1151,7 +1189,34 @@ class Qwen2_5_VLModel(Qwen2_5_VLPreTrainedModel):
         all_self_attns = () if output_attentions else None
         next_decoder_cache = None
 
-        for decoder_layer in self.layers:
+        # --- Start: Early Exit Logic ---
+        num_layers = len(self.layers)
+        target_exit_layer = num_layers # Default: run all layers
+
+        if decoder_exit_level is not None:
+            decoder_exit_level = decoder_exit_level.lower()
+            if decoder_exit_level == "low":
+                # Using 1/4 to match vision
+                target_exit_layer = math.ceil(num_layers / 4)
+            elif decoder_exit_level == "medium":
+                # Using 2/4 to match vision
+                target_exit_layer = math.ceil(num_layers * 2 / 4)
+            elif decoder_exit_level == "high":
+                # Using 3/4 to match vision
+                target_exit_layer = math.ceil(num_layers * 3/ 4)
+            else:
+                logger.warning(f"Invalid decoder_exit_level '{decoder_exit_level}'. Expected 'low', 'medium', or 'high'. Running all decoder layers.")
+                target_exit_layer = num_layers
+            # Ensure we run at least one layer if requested
+            target_exit_layer = max(1, target_exit_layer)
+            logger.info(f"Static early exit: Running first {target_exit_layer}/{num_layers} decoder layers based on level '{decoder_exit_level}'.")
+
+        # Iterate only through the layers up to the target_exit_layer
+        # Use slicing on self.layers
+        layers_to_run = self.layers[:target_exit_layer]
+        # --- End: Early Exit Logic ---
+
+        for decoder_layer in layers_to_run:
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
@@ -1472,15 +1537,15 @@ QWEN2_5_VL_INPUTS_DOCSTRING = r"""
 """
 
 
-class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMixin):
+class Qwen2_5_VLForConditionalGeneration_dev(Qwen2_5_VLPreTrainedModel, GenerationMixin):
     _tied_weights_keys = ["lm_head.weight"]
     config_class = Qwen2_5_VLConfig
     _no_split_modules = ["Qwen2_5_VLDecoderLayer", "Qwen2_5_VLVisionBlock"]
 
     def __init__(self, config):
         super().__init__(config)
-        self.visual = Qwen2_5_VisionTransformerPretrainedModel._from_config(config.vision_config)
-        self.model = Qwen2_5_VLModel(config)
+        self.visual = Qwen2_5_VisionTransformerPretrainedModel_dev._from_config(config.vision_config)
+        self.model = Qwen2_5_VLModel_dev(config)
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self.rope_deltas = None  # cache rope_deltas here
@@ -1701,6 +1766,8 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         pixel_values_videos: Optional[torch.FloatTensor] = None,
         image_grid_thw: Optional[torch.LongTensor] = None,
         video_grid_thw: Optional[torch.LongTensor] = None,
+        vision_exit_level: Optional[str] = None, # Pass down to visual encoder (Can be "low", "medium", "high", or None)
+        decoder_exit_level: Optional[str] = None, # Pass down to text decoder (Can be "low", "medium", "high", or None)
         rope_deltas: Optional[torch.LongTensor] = None,
         cache_position: Optional[torch.LongTensor] = None,
         second_per_grid_ts: Optional[torch.Tensor] = None,
@@ -1718,9 +1785,9 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         ```python
         >>> from PIL import Image
         >>> import requests
-        >>> from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+        >>> from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration_dev
 
-        >>> model = Qwen2_5_VLForConditionalGeneration.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
+        >>> model = Qwen2_5_VLForConditionalGeneration_dev.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
         >>> processor = AutoProcessor.from_pretrained("Qwen/Qwen2.5-VL-7B-Instruct")
 
         >>> messages = [
@@ -1754,7 +1821,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             inputs_embeds = self.model.embed_tokens(input_ids)
             if pixel_values is not None:
                 pixel_values = pixel_values.type(self.visual.dtype)
-                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw)
+                image_embeds = self.visual(pixel_values, grid_thw=image_grid_thw, vision_exit_level=vision_exit_level)
                 n_image_tokens = (input_ids == self.config.image_token_id).sum().item()
                 n_image_features = image_embeds.shape[0]
                 if n_image_tokens != n_image_features:
@@ -1772,7 +1839,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
 
             if pixel_values_videos is not None:
                 pixel_values_videos = pixel_values_videos.type(self.visual.dtype)
-                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw)
+                video_embeds = self.visual(pixel_values_videos, grid_thw=video_grid_thw, vision_exit_level=vision_exit_level)
                 n_video_tokens = (input_ids == self.config.video_token_id).sum().item()
                 n_video_features = video_embeds.shape[0]
                 if n_video_tokens != n_video_features:
@@ -1828,6 +1895,7 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
             attention_mask=attention_mask,
             past_key_values=past_key_values,
             inputs_embeds=inputs_embeds,
+            decoder_exit_level=decoder_exit_level,
             use_cache=use_cache,
             output_attentions=output_attentions,
             output_hidden_states=output_hidden_states,
@@ -2032,4 +2100,4 @@ class Qwen2_5_VLForConditionalGeneration(Qwen2_5_VLPreTrainedModel, GenerationMi
         return input_ids, model_kwargs
 
 
-__all__ = ["Qwen2_5_VLForConditionalGeneration", "Qwen2_5_VLModel", "Qwen2_5_VLPreTrainedModel"]
+__all__ = ["Qwen2_5_VLForConditionalGeneration_dev", "Qwen2_5_VLModel_dev", "Qwen2_5_VLPreTrainedModel"]
