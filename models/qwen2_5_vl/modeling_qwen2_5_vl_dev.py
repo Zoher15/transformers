@@ -497,19 +497,15 @@ class Qwen2_5_VisionTransformerPretrainedModel_dev(Qwen2_5_VLPreTrainedModel):
         self,
         hidden_states: torch.Tensor,
         grid_thw: torch.Tensor,
-        vision_exit_level: Optional[str] = None, # Can be "low", "medium", "high", or None
+        vision_exit_level: Optional[int] = None, # Can be "low", "medium", "high", or None
     ) -> torch.Tensor: # Return hidden states
         """
         Args:
             hidden_states (`torch.Tensor`): Input image/video tensor.
             grid_thw (`torch.Tensor`): Grid dimensions for RoPE calculation.
-            exit_level (`Optional[str]`, defaults to `None`):
-                Controls static early exit based on layer proportion.
-                - "low": Runs approx. the first 1/4 of vision layers.
-                - "medium": Runs approx. the first 2/4 of vision layers.
-                - "high": Runs approx. the first 3/4 of vision layers.
-                - None: Runs all vision layers (default).
-
+            exit_level (`Optional[int]`, defaults to `None`):
+                The layer at which to exit the model. If `None`, the model runs all layers. If an integer, the model
+                runs only the layers up to that index. This is useful for early exit strategies.
         Returns:
             `torch.Tensor`: hidden_states.
         """
@@ -548,22 +544,8 @@ class Qwen2_5_VisionTransformerPretrainedModel_dev(Qwen2_5_VLPreTrainedModel):
         target_exit_layer = num_layers # Default: run all layers
 
         if vision_exit_level is not None:
-            vision_exit_level = vision_exit_level.lower()
-            if vision_exit_level== "low":
-                # Run approx. 1/4 layers, use ceil to ensure at least that many
-                target_exit_layer = math.ceil(num_layers / 4)
-            elif vision_exit_level == "medium":
-                # Run approx. 1/2 layers, use ceil
-                target_exit_layer = math.ceil(num_layers * 2 / 4)
-            elif vision_exit_level == "high":
-                # Run approx. 3/4 layers, use ceil
-                target_exit_layer = math.ceil(num_layers * 3/ 4)
-            else:
-                logger.warning(f"Invalid exit_level '{vision_exit_level}'. Expected 'low', 'medium', or 'high'. Running all layers.")
-                target_exit_layer = num_layers
-            # Ensure we run at least one layer if requested
-            target_exit_layer = max(1, target_exit_layer)
-            logger.info(f"Static early exit: Running first {target_exit_layer}/{num_layers} vision layers based on level '{vision_exit_level}'.")
+            target_exit_layer -= vision_exit_level
+            
 
         # Iterate only through the blocks up to the target_exit_layer
         # Use slicing on self.blocks
